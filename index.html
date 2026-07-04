@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Control de Presupuesto</title>
-  <meta name="theme-color" content="#1f7a4d" />
+  <meta name="theme-color" content="#12345b" />
   <link rel="manifest" href="manifest.json" />
   <link rel="stylesheet" href="styles.css" />
 </head>
@@ -116,13 +116,22 @@
       <input id="monthlyBudgetInput" type="number" step="0.01" min="0" placeholder="Ej. 2800" />
       <label>Objetivo de ahorro mensual</label>
       <input id="savingsGoalInput" type="number" step="0.01" min="0" placeholder="Ej. 600" />
-      <label>Nueva categoría</label>
+      <button id="saveSettingsBtn" class="main-btn">Guardar configuración</button>
+      <button id="openCategoriesBtn" class="secondary-btn">Administrar categorías</button>
+      <button id="resetBtn" class="danger-btn">Borrar todos los datos</button>
+    </div>
+  </div>
+
+  <div id="categoriesModal" class="modal" hidden>
+    <div class="modal-card">
+      <button id="closeCategoriesModal" class="close" type="button" aria-label="Cerrar">×</button>
+      <h2>Administrar categorías</h2>
+      <p class="modal-help">Agrega categorías para adaptar la aplicación a trabajo, estudio, viajes o gastos personales.</p>
       <div class="inline-form">
         <input id="newCategoryInput" type="text" placeholder="Ej. Mascotas" />
-        <button id="addCategoryBtn" class="text-btn">Agregar</button>
+        <button id="addCategoryBtn" class="text-btn" type="button">Agregar</button>
       </div>
-      <button id="saveSettingsBtn" class="main-btn">Guardar configuración</button>
-      <button id="resetBtn" class="danger-btn">Borrar todos los datos</button>
+      <div id="categoriesList" class="category-list"></div>
     </div>
   </div>
 

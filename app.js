@@ -33,7 +33,7 @@ function filteredByPeriod(period){
 }
 function sum(list){ return list.reduce((a,e)=>a+Number(e.amount),0); }
 function render(){
-  renderSelectors(); renderTotals(); renderFavorites(); renderSummary(); renderHistory(); renderProjects();
+  renderSelectors(); renderTotals(); renderFavorites(); renderSummary(); renderHistory(); renderProjects(); renderCategories();
 }
 function renderSelectors(){
   $('categoryInput').innerHTML = state.categories.map(c=>`<option>${c}</option>`).join('');
@@ -74,14 +74,29 @@ function renderProjects(){
   $('projectList').innerHTML = state.projects.map(p=>{ const total=sum(state.expenses.filter(e=>e.projectId===p.id)); const avail=Number(p.budget||0)-total; return `<div class="item"><div><strong>${p.name}</strong><small>${p.budget?`Presupuesto ${money(p.budget)} · Disponible ${money(avail)}`:'Sin presupuesto'} · Gastado ${money(total)}</small></div><button class="mini-btn" data-active="${p.id}">${p.active?'Activo':'Usar'}</button></div>` }).join('');
   document.querySelectorAll('[data-active]').forEach(b=>b.onclick=()=>{ state.projects.forEach(p=>p.active=p.id===b.dataset.active); save(); });
 }
+function renderCategories(){
+  const list=$('categoriesList');
+  if(!list) return;
+  list.innerHTML=state.categories.map((c,i)=>`<div class="category-item"><span>${c}</span><button class="mini-btn delete" data-cat-del="${i}" type="button">Borrar</button></div>`).join('');
+  document.querySelectorAll('[data-cat-del]').forEach(btn=>btn.onclick=()=>{
+    const index=Number(btn.dataset.catDel);
+    const category=state.categories[index];
+    const inUse=state.expenses.some(e=>e.category===category) || state.favorites.some(f=>f.category===category);
+    if(inUse){ alert('No se puede borrar esta categoría porque ya está siendo utilizada en gastos o favoritos.'); return; }
+    if(state.categories.length<=1){ alert('Debe quedar al menos una categoría.'); return; }
+    if(confirm(`¿Borrar la categoría "${category}"?`)){ state.categories.splice(index,1); save(); }
+  });
+}
+function openModal(id){ $(id).hidden=false; document.body.classList.add('modal-open'); }
+function closeModal(id){ $(id).hidden=true; if($('modal').hidden && $('categoriesModal').hidden) document.body.classList.remove('modal-open'); }
 $('expenseForm').onsubmit=e=>{e.preventDefault(); addExpense($('amountInput').value,$('categoryInput').value,$('detailInput').value,$('projectInput').value); $('amountInput').value=''; $('detailInput').value=''; $('amountInput').focus();};
 $('periodFilter').onchange=renderSummary; $('searchInput').oninput=renderHistory;
 document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>{document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));document.querySelectorAll('.tab-content').forEach(x=>x.classList.remove('active'));t.classList.add('active');$(t.dataset.tab+'Tab').classList.add('active');});
-$('settingsBtn').onclick=()=>$('modal').hidden=false; $('closeModal').onclick=()=>$('modal').hidden=true;
-$('saveSettingsBtn').onclick=()=>{state.settings.monthlyBudget=Number($('monthlyBudgetInput').value)||0;state.settings.savingsGoal=Number($('savingsGoalInput').value)||0;$('modal').hidden=true;save();};
-$('addCategoryBtn').onclick=()=>{const c=$('newCategoryInput').value.trim(); if(c && !state.categories.includes(c)){state.categories.push(c);$('newCategoryInput').value='';save();}};
+$('settingsBtn').onclick=()=>openModal('modal'); $('closeModal').onclick=()=>closeModal('modal');
+$('saveSettingsBtn').onclick=()=>{state.settings.monthlyBudget=Number($('monthlyBudgetInput').value)||0;state.settings.savingsGoal=Number($('savingsGoalInput').value)||0;closeModal('modal');save();};
+$('openCategoriesBtn').onclick=()=>{closeModal('modal');openModal('categoriesModal');}; $('closeCategoriesModal').onclick=()=>closeModal('categoriesModal'); $('addCategoryBtn').onclick=()=>{const c=$('newCategoryInput').value.trim(); if(c && !state.categories.includes(c)){state.categories.push(c);$('newCategoryInput').value='';save();} else if(state.categories.includes(c)){alert('Esa categoría ya existe.');}};
 $('addFavoriteBtn').onclick=()=>{const label=prompt('Nombre del favorito:'); if(!label) return; const amount=Number(prompt('Monto en Bs:')); if(!amount) return; const category=prompt('Categoría:', state.categories[0]) || state.categories[0]; state.favorites.push({label,amount,category}); save();};
 $('projectForm').onsubmit=e=>{e.preventDefault(); state.projects.forEach(p=>p.active=false); state.projects.push({id:crypto.randomUUID(), name:$('projectNameInput').value.trim(), budget:Number($('projectBudgetInput').value)||0, active:true}); $('projectNameInput').value=''; $('projectBudgetInput').value=''; save();};
-$('resetBtn').onclick=()=>{ if(confirm('Esto borrará todos los gastos y configuración. ¿Continuar?')){ localStorage.removeItem(STORAGE_KEY); state=load(); $('modal').hidden=true; render(); }};
-if('serviceWorker' in navigator){ navigator.serviceWorker.register('sw.js').catch(()=>{}); }
+$('resetBtn').onclick=()=>{ if(confirm('Esto borrará todos los gastos y configuración. ¿Continuar?')){ localStorage.removeItem(STORAGE_KEY); state=load(); closeModal('modal'); render(); }};
+[$('modal'),$('categoriesModal')].forEach(m=>m.addEventListener('click',e=>{if(e.target===m) closeModal(m.id);})); document.addEventListener('keydown',e=>{if(e.key==='Escape'){if(!$('categoriesModal').hidden) closeModal('categoriesModal'); else if(!$('modal').hidden) closeModal('modal');}}); if('serviceWorker' in navigator){ navigator.serviceWorker.register('sw.js').then(reg=>reg.update()).catch(()=>{}); }
 render();
