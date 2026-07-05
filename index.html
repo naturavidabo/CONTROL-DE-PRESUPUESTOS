@@ -6,9 +6,9 @@
   <meta name="theme-color" content="#081f38" />
   <meta name="description" content="Control local de gastos, presupuestos y proyectos con respaldo reforzado." />
   <title>Control de Presupuesto</title>
-  <link rel="manifest" href="manifest.json?v=5" />
+  <link rel="manifest" href="manifest.json?v=5.1" />
   <link rel="icon" href="icon-v5.svg" type="image/svg+xml" />
-  <link rel="stylesheet" href="styles.css?v=5" />
+  <link rel="stylesheet" href="styles.css?v=5.1" />
 </head>
 <body>
   <div id="bootOverlay" class="system-overlay" aria-live="polite">
@@ -111,12 +111,12 @@
         <div class="panel"><h2>Ritmo de gasto</h2><p id="paceMessage" class="pace">Configura tu presupuesto para ver el ritmo de gasto.</p></div>
       </section>
 
-      <section id="historyTab" class="tab-content"><div class="panel"><div class="history-tools"><div><h2>Historial</h2><p class="section-help">Consulta, edita y exporta tus gastos.</p></div><button id="exportBtn" class="text-btn compact-btn" type="button">Exportar Excel</button></div><div class="history-filters"><input id="searchInput" class="search" placeholder="Buscar gasto" /><select id="historyMonthFilter"></select></div><div id="historyList" class="history"></div></div></section>
+      <section id="historyTab" class="tab-content"><div class="panel"><div class="history-tools"><div><h2>Historial</h2><p class="section-help">Consulta, edita y exporta tus gastos.</p></div><button id="exportBtn" class="text-btn compact-btn" type="button">Exportar Excel (.xlsx)</button></div><div class="history-filters"><input id="searchInput" class="search" placeholder="Buscar gasto" /><select id="historyMonthFilter"></select></div><div id="historyList" class="history"></div></div></section>
 
       <section id="projectsTab" class="tab-content"><div class="panel"><h2>Proyecto o viaje</h2><p class="section-help project-help">Separa gastos de viajes, cursos, comisiones u otras actividades sin perder el total general.</p><form id="projectForm" class="form compact-form"><div class="field"><label for="projectNameInput">Nombre</label><input id="projectNameInput" type="text" placeholder="Ej. Viaje a Cochabamba" required /></div><div class="field"><label for="projectBudgetInput">Presupuesto <span class="optional">(opcional)</span></label><input id="projectBudgetInput" type="text" inputmode="decimal" pattern="[0-9.,]*" placeholder="Ej. 1200" /></div><button class="main-btn full" type="submit">Crear y activar proyecto</button></form><div id="projectList" class="project-list"></div></div></section>
     </main>
 
-    <footer class="app-footer"><span>Control de Presupuesto B5 · almacenamiento protegido</span><button id="checkUpdateBtn" class="link-btn" type="button">Buscar actualización</button></footer>
+    <footer class="app-footer"><span>Control de Presupuesto B5.2 · almacenamiento protegido</span><button id="checkUpdateBtn" class="link-btn" type="button">Buscar actualización</button></footer>
   </div>
 
   <div id="toast" class="toast" hidden></div>
@@ -148,6 +148,6 @@
 
   <div id="resetModal" class="modal" hidden><div class="modal-card compact-modal"><button class="close" data-close="resetModal" type="button">×</button><h2>Borrar datos financieros</h2><p id="resetWarningText" class="danger-note"></p><p class="modal-help">Se creará una copia interna antes del borrado. Escribe <strong>BORRAR</strong> para confirmar.</p><input id="resetConfirmInput" type="text" autocomplete="off" placeholder="BORRAR" /><button id="confirmResetBtn" class="danger-btn" type="button">Confirmar borrado</button></div></div>
 
-  <script src="app.js?v=5"></script>
+  <script src="app.js?v=5.1"></script>
 </body>
 </html>

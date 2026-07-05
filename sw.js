@@ -1,11 +1,11 @@
 'use strict';
-const CACHE_NAME = 'control-presupuesto-b5-shell-v1';
+const CACHE_NAME = 'control-presupuesto-b5-2-shell-v1';
 const APP_SHELL = [
   './',
   './index.html',
-  './styles.css?v=5',
-  './app.js?v=5',
-  './manifest.json?v=5',
+  './styles.css?v=5.1',
+  './app.js?v=5.1',
+  './manifest.json?v=5.1',
   './icon-v5.svg',
   './icon-192-v5.png',
   './icon-512-v5.png'

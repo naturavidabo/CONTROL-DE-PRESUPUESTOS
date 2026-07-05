@@ -1450,34 +1450,282 @@ async function verifyIntegrity(showSuccess = true) {
 }
 
 function downloadBlob(content, type, name) {
-  const url = URL.createObjectURL(new Blob([content], { type }));
+  const blob = content instanceof Blob ? content : new Blob([content], { type });
+  const url = URL.createObjectURL(blob);
   const anchor = document.createElement('a');
   anchor.href = url;
   anchor.download = name;
   document.body.appendChild(anchor);
   anchor.click();
   anchor.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 1500);
+  setTimeout(() => URL.revokeObjectURL(url), 2500);
 }
 
-function exportCsv() {
-  const monthFilter = $('historyMonthFilter').value || 'all';
-  const rows = (monthFilter === 'all' ? activeExpenses() : activeExpenses().filter((expense) => expense.date.startsWith(monthFilter)))
-    .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
-  if (!rows.length) {
-    showToast('No hay gastos para exportar.');
-    return;
+function xmlEscape(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+}
+
+function excelColumnName(index) {
+  let value = Number(index);
+  let result = '';
+  while (value > 0) {
+    value -= 1;
+    result = String.fromCharCode(65 + (value % 26)) + result;
+    value = Math.floor(value / 26);
   }
-  const data = [
-    ['Mes', 'Fecha', 'Hora', 'Categoría', 'Detalle', 'Monto Bs', 'Proyecto'],
-    ...rows.map((expense) => [
-      expense.date.slice(0, 7), expense.date, expense.createdAt.slice(11, 16), expense.category,
-      expense.detail, Number(expense.amount).toFixed(2).replace('.', ','), projectById(expense.projectId)?.name || 'General'
-    ])
-  ];
-  const csv = '\uFEFF' + data.map((row) => row.map((value) => `"${String(value ?? '').replace(/"/g, '""')}"`).join(';')).join('\r\n');
-  downloadBlob(csv, 'text/csv;charset=utf-8', `control-presupuesto-${monthFilter}-${localDateKey()}.csv`);
-  showToast('Archivo compatible con Excel creado.');
+  return result;
+}
+
+function formatExportDate(dateValue) {
+  const match = String(dateValue || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  return match ? `${match[3]}/${match[2]}/${match[1]}` : String(dateValue || '');
+}
+
+function getExpenseTime(expense) {
+  const direct = String(expense?.time || '').match(/^\d{2}:\d{2}/)?.[0];
+  if (direct) return direct;
+  const createdAt = String(expense?.createdAt || '');
+  return createdAt.match(/T(\d{2}:\d{2})/)?.[1] || '';
+}
+
+function normalizedExportExpense(expense, index) {
+  const amount = parseAmount(expense?.amount ?? expense?.monto ?? expense?.value ?? expense?.price);
+  const category = String(expense?.category ?? expense?.categoryName ?? expense?.tipo ?? '').trim();
+  const detail = String(expense?.detail ?? expense?.description ?? expense?.detalle ?? '').trim();
+  const date = String(expense?.date ?? expense?.fecha ?? String(expense?.createdAt || '').slice(0, 10)).trim();
+  const projectName = String(
+    projectById(expense?.projectId)?.name
+      || expense?.projectName
+      || (expense?.projectId === 'general' ? 'Gastos generales' : '')
+      || 'Gastos generales'
+  ).trim();
+  return {
+    number: index + 1,
+    date,
+    time: getExpenseTime(expense),
+    category: category || 'Sin categoría',
+    detail: detail || 'Sin detalle',
+    amount,
+    project: projectName,
+    month: date.slice(0, 7)
+  };
+}
+
+function exportRowsFromCurrentFilters() {
+  const monthFilter = $('historyMonthFilter').value || 'all';
+  const query = $('searchInput').value.trim().toLowerCase();
+  const rows = activeExpenses()
+    .filter((expense) => {
+      if (monthFilter !== 'all' && !String(expense.date || '').startsWith(monthFilter)) return false;
+      const searchable = `${expense.category || ''} ${expense.detail || ''} ${projectById(expense.projectId)?.name || ''}`.toLowerCase();
+      return !query || searchable.includes(query);
+    })
+    .sort((a, b) => String(a.createdAt || '').localeCompare(String(b.createdAt || '')))
+    .map(normalizedExportExpense);
+  return { monthFilter, query, rows };
+}
+
+function validateExportRows(rows) {
+  if (!rows.length) throw new DataSafetyError('No hay gastos para exportar con los filtros actuales.');
+  const invalidAmounts = rows.filter((row) => !Number.isFinite(row.amount) || row.amount <= 0);
+  const invalidDates = rows.filter((row) => !/^\d{4}-\d{2}-\d{2}$/.test(row.date));
+  if (invalidAmounts.length || invalidDates.length) {
+    throw new DataSafetyError(`La exportación fue detenida porque ${invalidAmounts.length + invalidDates.length} registro(s) tienen datos incompletos. Revisa el historial antes de exportar.`);
+  }
+}
+
+function uint16LE(value) {
+  const bytes = new Uint8Array(2);
+  new DataView(bytes.buffer).setUint16(0, value >>> 0, true);
+  return bytes;
+}
+
+function uint32LE(value) {
+  const bytes = new Uint8Array(4);
+  new DataView(bytes.buffer).setUint32(0, value >>> 0, true);
+  return bytes;
+}
+
+const CRC32_TABLE = (() => {
+  const table = new Uint32Array(256);
+  for (let n = 0; n < 256; n += 1) {
+    let c = n;
+    for (let k = 0; k < 8; k += 1) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+    table[n] = c >>> 0;
+  }
+  return table;
+})();
+
+function crc32(bytes) {
+  let crc = 0xFFFFFFFF;
+  for (let i = 0; i < bytes.length; i += 1) crc = CRC32_TABLE[(crc ^ bytes[i]) & 0xFF] ^ (crc >>> 8);
+  return (crc ^ 0xFFFFFFFF) >>> 0;
+}
+
+function concatByteArrays(parts) {
+  const total = parts.reduce((sumValue, part) => sumValue + part.length, 0);
+  const result = new Uint8Array(total);
+  let offset = 0;
+  parts.forEach((part) => {
+    result.set(part, offset);
+    offset += part.length;
+  });
+  return result;
+}
+
+function dosDateTime(date = new Date()) {
+  const year = Math.max(1980, date.getFullYear());
+  return {
+    time: ((date.getHours() & 31) << 11) | ((date.getMinutes() & 63) << 5) | Math.floor(date.getSeconds() / 2),
+    date: (((year - 1980) & 127) << 9) | (((date.getMonth() + 1) & 15) << 5) | (date.getDate() & 31)
+  };
+}
+
+function createStoredZip(files) {
+  const encoder = new TextEncoder();
+  const localParts = [];
+  const centralParts = [];
+  const timestamp = dosDateTime();
+  let offset = 0;
+
+  files.forEach(({ name, content }) => {
+    const nameBytes = encoder.encode(name);
+    const dataBytes = content instanceof Uint8Array ? content : encoder.encode(String(content));
+    const checksum = crc32(dataBytes);
+    const flags = 0x0800;
+    const localHeader = concatByteArrays([
+      uint32LE(0x04034B50), uint16LE(20), uint16LE(flags), uint16LE(0),
+      uint16LE(timestamp.time), uint16LE(timestamp.date), uint32LE(checksum),
+      uint32LE(dataBytes.length), uint32LE(dataBytes.length), uint16LE(nameBytes.length), uint16LE(0), nameBytes
+    ]);
+    localParts.push(localHeader, dataBytes);
+
+    const centralHeader = concatByteArrays([
+      uint32LE(0x02014B50), uint16LE(20), uint16LE(20), uint16LE(flags), uint16LE(0),
+      uint16LE(timestamp.time), uint16LE(timestamp.date), uint32LE(checksum),
+      uint32LE(dataBytes.length), uint32LE(dataBytes.length), uint16LE(nameBytes.length),
+      uint16LE(0), uint16LE(0), uint16LE(0), uint16LE(0), uint32LE(0), uint32LE(offset), nameBytes
+    ]);
+    centralParts.push(centralHeader);
+    offset += localHeader.length + dataBytes.length;
+  });
+
+  const centralDirectory = concatByteArrays(centralParts);
+  const end = concatByteArrays([
+    uint32LE(0x06054B50), uint16LE(0), uint16LE(0), uint16LE(files.length),
+    uint16LE(files.length), uint32LE(centralDirectory.length), uint32LE(offset), uint16LE(0)
+  ]);
+  return new Blob([...localParts, centralDirectory, end], {
+    type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+  });
+}
+
+function inlineStringCell(reference, value, style = 0) {
+  const preserve = /^\s|\s$|\n/.test(String(value ?? '')) ? ' xml:space="preserve"' : '';
+  return `<c r="${reference}" t="inlineStr"${style ? ` s="${style}"` : ''}><is><t${preserve}>${xmlEscape(value)}</t></is></c>`;
+}
+
+function numericCell(reference, value, style = 0) {
+  return `<c r="${reference}"${style ? ` s="${style}"` : ''}><v>${Number(value)}</v></c>`;
+}
+
+function buildExpenseWorkbook(rows, periodLabel) {
+  validateExportRows(rows);
+  const total = rows.reduce((sumValue, row) => sumValue + row.amount, 0);
+  const exportedAt = new Date();
+  const headers = ['N.º', 'Fecha', 'Hora', 'Categoría', 'Detalle', 'Monto (Bs)', 'Proyecto', 'Mes'];
+  const dataStartRow = 6;
+  const dataRows = rows.map((row, rowIndex) => {
+    const excelRow = dataStartRow + rowIndex;
+    const values = [
+      row.number,
+      formatExportDate(row.date),
+      row.time,
+      row.category,
+      row.detail,
+      row.amount,
+      row.project,
+      row.month
+    ];
+    const cells = values.map((value, columnIndex) => {
+      const ref = `${excelColumnName(columnIndex + 1)}${excelRow}`;
+      if (columnIndex === 0) return numericCell(ref, value, 0);
+      if (columnIndex === 5) return numericCell(ref, value, 2);
+      return inlineStringCell(ref, value, 0);
+    }).join('');
+    return `<row r="${excelRow}">${cells}</row>`;
+  }).join('');
+
+  const headerCells = headers.map((header, index) => inlineStringCell(`${excelColumnName(index + 1)}5`, header, 1)).join('');
+  const lastDataRow = dataStartRow + rows.length - 1;
+  const sheetXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <sheetViews><sheetView workbookViewId="0"><pane ySplit="5" topLeftCell="A6" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>
+  <cols><col min="1" max="1" width="7" customWidth="1"/><col min="2" max="2" width="13" customWidth="1"/><col min="3" max="3" width="10" customWidth="1"/><col min="4" max="4" width="25" customWidth="1"/><col min="5" max="5" width="36" customWidth="1"/><col min="6" max="6" width="15" customWidth="1"/><col min="7" max="7" width="27" customWidth="1"/><col min="8" max="8" width="12" customWidth="1"/></cols>
+  <sheetData>
+    <row r="1" ht="24" customHeight="1">${inlineStringCell('A1', 'Control de Presupuesto — Gastos exportados', 3)}</row>
+    <row r="2">${inlineStringCell('A2', 'Periodo', 4)}${inlineStringCell('B2', periodLabel, 0)}${inlineStringCell('D2', 'Fecha de exportación', 4)}${inlineStringCell('E2', exportedAt.toLocaleString('es-BO'), 0)}</row>
+    <row r="3">${inlineStringCell('A3', 'Registros', 4)}${numericCell('B3', rows.length, 0)}${inlineStringCell('D3', 'Total gastado (Bs)', 4)}${numericCell('E3', total, 2)}</row>
+    <row r="5" ht="22" customHeight="1">${headerCells}</row>
+    ${dataRows}
+  </sheetData>
+  <mergeCells count="1"><mergeCell ref="A1:H1"/></mergeCells>
+  <pageMargins left="0.4" right="0.4" top="0.6" bottom="0.6" header="0.2" footer="0.2"/>
+</worksheet>`;
+
+  const stylesXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <numFmts count="1"><numFmt numFmtId="164" formatCode="&quot;Bs &quot;#,##0.00"/></numFmts>
+  <fonts count="3"><font><sz val="11"/><name val="Aptos"/></font><font><b/><color rgb="FFFFFFFF"/><sz val="11"/><name val="Aptos"/></font><font><b/><color rgb="FF0B1F3A"/><sz val="16"/><name val="Aptos Display"/></font></fonts>
+  <fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF123B69"/><bgColor indexed="64"/></patternFill></fill></fills>
+  <borders count="2"><border><left/><right/><top/><bottom/><diagonal/></border><border><left style="thin"><color rgb="FFD5DFEA"/></left><right style="thin"><color rgb="FFD5DFEA"/></right><top style="thin"><color rgb="FFD5DFEA"/></top><bottom style="thin"><color rgb="FFD5DFEA"/></bottom><diagonal/></border></borders>
+  <cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
+  <cellXfs count="5"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="2" borderId="1" xfId="0" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf><xf numFmtId="164" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/><xf numFmtId="0" fontId="2" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0"/></cellXfs>
+  <cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>
+</styleSheet>`;
+
+  const workbookXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><bookViews><workbookView/></bookViews><sheets><sheet name="Gastos" sheetId="1" r:id="rId1"/></sheets></workbook>`;
+  const workbookRels = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>`;
+  const rootRels = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="docProps/core.xml"/><Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties" Target="docProps/app.xml"/></Relationships>`;
+  const contentTypes = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/><Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/><Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/></Types>`;
+  const nowIso = exportedAt.toISOString();
+  const coreXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"><dc:title>Control de Presupuesto</dc:title><dc:creator>Control de Presupuesto B5.2</dc:creator><cp:lastModifiedBy>Control de Presupuesto B5.2</cp:lastModifiedBy><dcterms:created xsi:type="dcterms:W3CDTF">${nowIso}</dcterms:created><dcterms:modified xsi:type="dcterms:W3CDTF">${nowIso}</dcterms:modified></cp:coreProperties>`;
+  const appXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties" xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes"><Application>Control de Presupuesto B5.2</Application><DocSecurity>0</DocSecurity><AppVersion>5.2</AppVersion></Properties>`;
+
+  return {
+    blob: createStoredZip([
+      { name: '[Content_Types].xml', content: contentTypes },
+      { name: '_rels/.rels', content: rootRels },
+      { name: 'docProps/core.xml', content: coreXml },
+      { name: 'docProps/app.xml', content: appXml },
+      { name: 'xl/workbook.xml', content: workbookXml },
+      { name: 'xl/_rels/workbook.xml.rels', content: workbookRels },
+      { name: 'xl/styles.xml', content: stylesXml },
+      { name: 'xl/worksheets/sheet1.xml', content: sheetXml }
+    ]),
+    total,
+    count: rows.length
+  };
+}
+
+function exportExcel() {
+  try {
+    const { monthFilter, query, rows } = exportRowsFromCurrentFilters();
+    validateExportRows(rows);
+    const periodLabel = monthFilter === 'all' ? 'Todos los meses' : monthLabel(monthFilter);
+    const workbook = buildExpenseWorkbook(rows, query ? `${periodLabel} · filtro: ${query}` : periodLabel);
+    const safePeriod = monthFilter === 'all' ? 'todos-los-meses' : monthFilter;
+    downloadBlob(workbook.blob, workbook.blob.type, `control-presupuesto-${safePeriod}-${localDateKey()}.xlsx`);
+    showToast(`Excel verificado: ${workbook.count} gasto(s), total ${money(workbook.total)}.`);
+  } catch (error) {
+    console.error(error);
+    showToast(error.message || 'No se pudo crear el archivo Excel.');
+  }
 }
 
 async function exportBackup() {
@@ -1850,7 +2098,7 @@ function bindEvents() {
   $('periodFilter').onchange = renderSummary;
   $('searchInput').oninput = renderHistory;
   $('historyMonthFilter').onchange = renderHistory;
-  $('exportBtn').onclick = exportCsv;
+  $('exportBtn').onclick = exportExcel;
 
   document.querySelectorAll('.tab').forEach((tab) => {
     tab.onclick = () => {
