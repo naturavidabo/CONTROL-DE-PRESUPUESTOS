@@ -2,11 +2,13 @@
 <html lang="es">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0b2b4c" />
+  <meta name="description" content="Control local de gastos, presupuestos y proyectos." />
   <title>Control de Presupuesto</title>
-  <meta name="theme-color" content="#12345b" />
-  <link rel="manifest" href="manifest.json" />
-  <link rel="stylesheet" href="styles.css" />
+  <link rel="manifest" href="manifest.json?v=3" />
+  <link rel="icon" href="icon-v3.svg" type="image/svg+xml" />
+  <link rel="stylesheet" href="styles.css?v=3" />
 </head>
 <body>
   <div class="app">
@@ -16,33 +18,55 @@
         <h1>Control de Presupuesto</h1>
         <p id="activeProjectLabel">Gastos generales</p>
       </div>
-      <button id="settingsBtn" class="icon-btn" aria-label="Configuración">⚙️</button>
+      <button id="settingsBtn" class="icon-btn" type="button" aria-label="Abrir configuración">⚙️</button>
     </header>
 
-    <section class="cards">
-      <article class="card primary">
-        <span>Disponible del mes</span>
-        <strong id="availableMonth">Bs 0.00</strong>
-        <small id="budgetStatus">Configura tu presupuesto mensual</small>
+    <section class="overview">
+      <article class="budget-card">
+        <div class="budget-head">
+          <span>Disponible de <strong id="currentMonthName">este mes</strong></span>
+          <span id="monthProgressBadge" class="badge">Sin configurar</span>
+        </div>
+        <strong id="availableMonth" class="main-amount">Bs 0,00</strong>
+        <p id="budgetStatus" class="muted">Configura tu presupuesto mensual.</p>
+        <div class="daily-reference">
+          <span>Referencia diaria</span>
+          <strong id="dailyAllowance">—</strong>
+          <small id="monthDaysInfo">Se calcula según los días del mes.</small>
+        </div>
       </article>
-      <article class="card">
-        <span>Hoy</span>
-        <strong id="todayTotal">Bs 0.00</strong>
+
+      <article id="activeProjectCard" class="project-highlight" hidden>
+        <div class="project-highlight-head">
+          <div>
+            <span>Proyecto activo</span>
+            <strong id="activeProjectName">—</strong>
+          </div>
+          <button id="finishProjectBtn" class="small-light-btn" type="button">Finalizar</button>
+        </div>
+        <div class="project-numbers">
+          <div><span>Presupuesto</span><strong id="activeProjectBudget">Bs 0,00</strong></div>
+          <div><span>Gastado</span><strong id="activeProjectSpent">Bs 0,00</strong></div>
+          <div><span>Disponible</span><strong id="activeProjectAvailable">Bs 0,00</strong></div>
+        </div>
+        <div class="project-progress"><span id="activeProjectProgress"></span></div>
+        <small>Estos gastos también se incluyen en el total mensual general.</small>
       </article>
-      <article class="card">
-        <span>Semana</span>
-        <strong id="weekTotal">Bs 0.00</strong>
-      </article>
-      <article class="card">
-        <span>Mes</span>
-        <strong id="monthTotal">Bs 0.00</strong>
-      </article>
+    </section>
+
+    <section class="mini-stats" aria-label="Resumen de gastos">
+      <article><span>Gastado hoy</span><strong id="todayTotal">Bs 0,00</strong></article>
+      <article><span>Esta semana</span><strong id="weekTotal">Bs 0,00</strong></article>
+      <article><span>Este mes</span><strong id="monthTotal">Bs 0,00</strong></article>
     </section>
 
     <section class="panel quick-panel">
       <div class="panel-title">
-        <h2>Registro rápido</h2>
-        <button id="addFavoriteBtn" class="text-btn">+ favorito</button>
+        <div>
+          <h2>Registro rápido</h2>
+          <p class="section-help">Toca un favorito, revisa el monto y confirma. Usa ✎ para editarlo.</p>
+        </div>
+        <button id="addFavoriteBtn" class="text-btn compact-btn" type="button">+ Favorito</button>
       </div>
       <div id="quickButtons" class="quick-grid"></div>
     </section>
@@ -50,27 +74,51 @@
     <section class="panel">
       <h2>Nuevo gasto</h2>
       <form id="expenseForm" class="form">
-        <input id="amountInput" type="number" step="0.01" min="0" placeholder="Monto Bs" required />
-        <select id="categoryInput" required></select>
-        <input id="detailInput" type="text" placeholder="Detalle opcional" />
-        <select id="projectInput"></select>
-        <button type="submit" class="main-btn">Guardar gasto</button>
+        <div class="field">
+          <label for="amountInput">Monto</label>
+          <input id="amountInput" type="text" inputmode="decimal" autocomplete="off" placeholder="Ej. 15 o 15,50" required />
+        </div>
+
+        <div class="field">
+          <label>Categoría del gasto</label>
+          <button id="categoryPickerBtn" class="select-button" type="button">
+            <span id="categoryPickerText">Transporte local</span><span aria-hidden="true">▾</span>
+          </button>
+          <input id="categoryInput" type="hidden" value="Transporte local" />
+          <small>Toca para ver todas las categorías.</small>
+        </div>
+
+        <div class="field">
+          <label for="detailInput">Detalle <span class="optional">(opcional)</span></label>
+          <input id="detailInput" type="text" autocomplete="off" placeholder="Ej. almuerzo, taxi, fotocopias" />
+        </div>
+
+        <div class="field">
+          <label for="projectInput">Asignar a</label>
+          <select id="projectInput"></select>
+          <small>Un proyecto permite separar gastos de viajes o actividades especiales.</small>
+        </div>
+
+        <button type="submit" class="main-btn full">Guardar gasto</button>
       </form>
-      <p id="savedMsg" class="saved-msg" hidden>✅ Gasto guardado correctamente</p>
+      <p id="savedMsg" class="saved-msg" hidden>✓ Gasto guardado correctamente</p>
     </section>
 
-    <section class="tabs">
-      <button class="tab active" data-tab="summary">Resumen</button>
-      <button class="tab" data-tab="history">Historial</button>
-      <button class="tab" data-tab="projects">Proyectos</button>
-    </section>
+    <nav class="tabs" aria-label="Secciones de la aplicación">
+      <button class="tab active" data-tab="summary" type="button">Resumen</button>
+      <button class="tab" data-tab="history" type="button">Historial</button>
+      <button class="tab" data-tab="projects" type="button">Proyectos</button>
+    </nav>
 
     <main>
       <section id="summaryTab" class="tab-content active">
         <div class="panel">
-          <div class="panel-title">
-            <h2>Por categoría</h2>
-            <select id="periodFilter">
+          <div class="panel-title inline-title">
+            <div>
+              <h2>Gastos por categoría</h2>
+              <p id="categoryPeriodTotal" class="section-help">Total del mes: Bs 0,00</p>
+            </div>
+            <select id="periodFilter" class="compact-select" aria-label="Periodo del resumen">
               <option value="day">Hoy</option>
               <option value="week">Semana</option>
               <option value="month" selected>Mes</option>
@@ -78,6 +126,7 @@
           </div>
           <div id="categorySummary" class="bars"></div>
         </div>
+
         <div class="panel">
           <h2>Ritmo de gasto</h2>
           <p id="paceMessage" class="pace">Configura tu presupuesto para ver el ritmo de gasto.</p>
@@ -86,9 +135,16 @@
 
       <section id="historyTab" class="tab-content">
         <div class="panel">
-          <div class="panel-title">
-            <h2>Historial</h2>
+          <div class="history-tools">
+            <div>
+              <h2>Historial</h2>
+              <p class="section-help">Consulta por mes y guarda una copia compatible con Excel.</p>
+            </div>
+            <button id="exportBtn" class="text-btn compact-btn" type="button">Exportar para Excel</button>
+          </div>
+          <div class="history-filters">
             <input id="searchInput" class="search" placeholder="Buscar gasto" />
+            <select id="historyMonthFilter" aria-label="Filtrar historial por mes"></select>
           </div>
           <div id="historyList" class="history"></div>
         </div>
@@ -96,11 +152,18 @@
 
       <section id="projectsTab" class="tab-content">
         <div class="panel">
-          <h2>Modo proyecto / viaje</h2>
-          <form id="projectForm" class="form compact">
-            <input id="projectNameInput" type="text" placeholder="Ej. Curso en Sucre" required />
-            <input id="projectBudgetInput" type="number" step="0.01" min="0" placeholder="Presupuesto opcional" />
-            <button class="main-btn" type="submit">Crear proyecto</button>
+          <h2>Proyecto o viaje</h2>
+          <p class="section-help project-help">Crea un presupuesto separado para un viaje, curso, comisión o actividad especial. Al activarlo, los nuevos gastos se asignarán automáticamente a ese proyecto.</p>
+          <form id="projectForm" class="form compact-form">
+            <div class="field">
+              <label for="projectNameInput">Nombre</label>
+              <input id="projectNameInput" type="text" placeholder="Ej. Viaje a Cochabamba" required />
+            </div>
+            <div class="field">
+              <label for="projectBudgetInput">Presupuesto <span class="optional">(opcional)</span></label>
+              <input id="projectBudgetInput" type="text" inputmode="decimal" autocomplete="off" placeholder="Ej. 1200" />
+            </div>
+            <button class="main-btn full" type="submit">Crear y activar proyecto</button>
           </form>
           <div id="projectList" class="project-list"></div>
         </div>
@@ -108,23 +171,30 @@
     </main>
   </div>
 
-  <div id="modal" class="modal" hidden>
+  <div id="toast" class="toast" hidden></div>
+
+  <div id="settingsModal" class="modal" hidden>
     <div class="modal-card">
-      <button id="closeModal" class="close">×</button>
-      <h2>Configuración</h2>
-      <label>Presupuesto mensual disponible</label>
-      <input id="monthlyBudgetInput" type="number" step="0.01" min="0" placeholder="Ej. 2800" />
-      <label>Objetivo de ahorro mensual</label>
-      <input id="savingsGoalInput" type="number" step="0.01" min="0" placeholder="Ej. 600" />
-      <button id="saveSettingsBtn" class="main-btn">Guardar configuración</button>
-      <button id="openCategoriesBtn" class="secondary-btn">Administrar categorías</button>
-      <button id="resetBtn" class="danger-btn">Borrar todos los datos</button>
+      <button class="close" data-close="settingsModal" type="button" aria-label="Cerrar">×</button>
+      <h2>Configuración mensual</h2>
+      <p class="modal-help">Puedes guardar un presupuesto diferente para cada mes.</p>
+      <label for="settingsMonthInput">Mes</label>
+      <input id="settingsMonthInput" type="month" />
+      <label for="monthlyBudgetInput">Presupuesto disponible</label>
+      <input id="monthlyBudgetInput" type="text" inputmode="decimal" autocomplete="off" placeholder="Ej. 2900" />
+      <label for="savingsGoalInput">Objetivo de ahorro</label>
+      <input id="savingsGoalInput" type="text" inputmode="decimal" autocomplete="off" placeholder="Ej. 700" />
+      <p class="calculation-note">La aplicación calculará el gasto permitido: presupuesto menos ahorro.</p>
+      <button id="saveSettingsBtn" class="main-btn full" type="button">Guardar configuración</button>
+      <button id="openCategoriesBtn" class="secondary-btn" type="button">Administrar categorías</button>
+      <button id="exportSettingsBtn" class="secondary-btn" type="button">Exportar gastos para Excel</button>
+      <button id="resetBtn" class="danger-btn" type="button">Borrar todos los datos</button>
     </div>
   </div>
 
   <div id="categoriesModal" class="modal" hidden>
     <div class="modal-card">
-      <button id="closeCategoriesModal" class="close" type="button" aria-label="Cerrar">×</button>
+      <button class="close" data-close="categoriesModal" type="button" aria-label="Cerrar">×</button>
       <h2>Administrar categorías</h2>
       <p class="modal-help">Agrega categorías para adaptar la aplicación a trabajo, estudio, viajes o gastos personales.</p>
       <div class="inline-form">
@@ -135,6 +205,73 @@
     </div>
   </div>
 
-  <script src="app.js"></script>
+  <div id="categoryPickerModal" class="modal bottom-modal" hidden>
+    <div class="modal-card compact-modal">
+      <button class="close" data-close="categoryPickerModal" type="button" aria-label="Cerrar">×</button>
+      <h2>Selecciona una categoría</h2>
+      <div id="categoryOptions" class="category-options"></div>
+    </div>
+  </div>
+
+  <div id="favoriteConfirmModal" class="modal" hidden>
+    <div class="modal-card compact-modal">
+      <button class="close" data-close="favoriteConfirmModal" type="button" aria-label="Cerrar">×</button>
+      <h2 id="favoriteConfirmTitle">Confirmar gasto</h2>
+      <p id="favoriteConfirmInfo" class="modal-help"></p>
+      <label for="favoriteConfirmAmount">Monto</label>
+      <input id="favoriteConfirmAmount" type="text" inputmode="decimal" autocomplete="off" />
+      <label for="favoriteConfirmProject">Asignar a</label>
+      <select id="favoriteConfirmProject"></select>
+      <div class="modal-actions">
+        <button class="secondary-action" data-close="favoriteConfirmModal" type="button">Cancelar</button>
+        <button id="confirmFavoriteBtn" class="main-btn" type="button">Confirmar gasto</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="favoriteEditorModal" class="modal" hidden>
+    <div class="modal-card compact-modal">
+      <button class="close" data-close="favoriteEditorModal" type="button" aria-label="Cerrar">×</button>
+      <h2 id="favoriteEditorTitle">Nuevo favorito</h2>
+      <label for="favoriteLabelInput">Nombre</label>
+      <input id="favoriteLabelInput" type="text" placeholder="Ej. Taxi" />
+      <label for="favoriteAmountInput">Monto habitual</label>
+      <input id="favoriteAmountInput" type="text" inputmode="decimal" autocomplete="off" placeholder="Ej. 10" />
+      <label for="favoriteCategoryInput">Categoría</label>
+      <select id="favoriteCategoryInput"></select>
+      <button id="saveFavoriteBtn" class="main-btn full" type="button">Guardar favorito</button>
+      <button id="deleteFavoriteBtn" class="danger-btn" type="button" hidden>Borrar favorito</button>
+    </div>
+  </div>
+
+  <div id="expenseEditorModal" class="modal" hidden>
+    <div class="modal-card compact-modal">
+      <button class="close" data-close="expenseEditorModal" type="button" aria-label="Cerrar">×</button>
+      <h2>Editar gasto</h2>
+      <label for="editExpenseAmount">Monto</label>
+      <input id="editExpenseAmount" type="text" inputmode="decimal" autocomplete="off" />
+      <label for="editExpenseCategory">Categoría</label>
+      <select id="editExpenseCategory"></select>
+      <label for="editExpenseDetail">Detalle</label>
+      <input id="editExpenseDetail" type="text" />
+      <label for="editExpenseProject">Asignar a</label>
+      <select id="editExpenseProject"></select>
+      <button id="saveExpenseEditBtn" class="main-btn full" type="button">Guardar cambios</button>
+    </div>
+  </div>
+
+  <div id="projectEditorModal" class="modal" hidden>
+    <div class="modal-card compact-modal">
+      <button class="close" data-close="projectEditorModal" type="button" aria-label="Cerrar">×</button>
+      <h2>Editar proyecto</h2>
+      <label for="editProjectName">Nombre</label>
+      <input id="editProjectName" type="text" />
+      <label for="editProjectBudget">Presupuesto</label>
+      <input id="editProjectBudget" type="text" inputmode="decimal" autocomplete="off" />
+      <button id="saveProjectEditBtn" class="main-btn full" type="button">Guardar cambios</button>
+    </div>
+  </div>
+
+  <script src="app.js?v=3"></script>
 </body>
 </html>
