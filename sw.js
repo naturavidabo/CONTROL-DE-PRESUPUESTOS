@@ -1,11 +1,12 @@
 'use strict';
-const CACHE_NAME = 'control-presupuesto-b5-2-shell-v1';
+const CACHE_NAME = 'control-presupuesto-b5-3-shell-v1';
 const APP_SHELL = [
   './',
   './index.html',
-  './styles.css?v=5.1',
-  './app.js?v=5.1',
-  './manifest.json?v=5.1',
+  './styles.css?v=5.3',
+  './app.js?v=5.3',
+  './manifest.json?v=5.3',
+  './version.json',
   './icon-v5.svg',
   './icon-192-v5.png',
   './icon-512-v5.png'
@@ -31,15 +32,22 @@ self.addEventListener('fetch', (event) => {
   if (event.request.method !== 'GET') return;
   const url = new URL(event.request.url);
   if (url.origin !== self.location.origin) return;
-  event.respondWith(
-    fetch(event.request)
-      .then((response) => {
-        if (response && response.ok) {
-          const copy = response.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
-        }
-        return response;
-      })
-      .catch(() => caches.match(event.request).then((cached) => cached || caches.match('./index.html')))
-  );
+
+  const isFreshAsset = event.request.mode === 'navigate' || /\.(?:html|js|css|json)$/.test(url.pathname);
+  event.respondWith((async () => {
+    try {
+      const request = isFreshAsset ? new Request(event.request, { cache: 'no-store' }) : event.request;
+      const response = await fetch(request);
+      if (response && response.ok) {
+        const cache = await caches.open(CACHE_NAME);
+        cache.put(event.request, response.clone()).catch(() => {});
+      }
+      return response;
+    } catch (_) {
+      const cached = await caches.match(event.request, { ignoreSearch: true });
+      if (cached) return cached;
+      if (event.request.mode === 'navigate') return caches.match('./index.html');
+      throw _;
+    }
+  })());
 });

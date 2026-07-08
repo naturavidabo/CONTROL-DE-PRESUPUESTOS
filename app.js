@@ -1,6 +1,8 @@
 'use strict';
 
 const APP_VERSION = 5;
+const APP_RELEASE = '5.3';
+const UI_PREFS_KEY = 'control_presupuesto_ui_prefs_v1';
 const DB_NAME = 'control_presupuesto_b5';
 const DB_VERSION = 5;
 const LEGACY_STORAGE_KEY = 'control_presupuesto_v1';
@@ -42,11 +44,49 @@ const DEFAULT_FAVORITES = [
   { label: 'Gaseosa', amount: 5, category: 'Bebidas / antojos' }
 ];
 
+const CATEGORY_PALETTE = [
+  { value: '#F59E0B', label: 'Naranja' },
+  { value: '#3B82F6', label: 'Azul' },
+  { value: '#EC4899', label: 'Rosado' },
+  { value: '#8B5CF6', label: 'Morado' },
+  { value: '#F9736B', label: 'Coral' },
+  { value: '#14B8A6', label: 'Turquesa' },
+  { value: '#22C55E', label: 'Verde' },
+  { value: '#64748B', label: 'Gris azulado' },
+  { value: '#D4A72C', label: 'Dorado' },
+  { value: '#6366F1', label: 'Índigo' },
+  { value: '#0EA5E9', label: 'Celeste' },
+  { value: '#8B6F5A', label: 'Marrón' }
+];
+const CATEGORY_ICONS = ['🍽️', '🚕', '🍬', '📚', '❤️', '🧴', '🏦', '🏠', '🎖️', '📱', '✈️', '📌', '🛒', '🐾', '🎁', '⚽', '🧾', '💡'];
+const CATEGORY_PRESETS = {
+  'Alimentación': { icon: '🍽️', color: '#F59E0B' },
+  'Transporte local': { icon: '🚕', color: '#3B82F6' },
+  'Bebidas / antojos': { icon: '🍬', color: '#EC4899' },
+  'Trabajo / estudios': { icon: '📚', color: '#8B5CF6' },
+  'Salud': { icon: '❤️', color: '#F9736B' },
+  'Higiene / limpieza': { icon: '🧴', color: '#14B8A6' },
+  'Trámites / bancos': { icon: '🏦', color: '#64748B' },
+  'Alquiler / vivienda': { icon: '🏠', color: '#22C55E' },
+  'Uniformes / accesorios': { icon: '🎖️', color: '#D4A72C' },
+  'Comunicación': { icon: '📱', color: '#0EA5E9' },
+  'Viajes y traslados': { icon: '✈️', color: '#6366F1' },
+  'Otros': { icon: '📌', color: '#64748B' }
+};
+const DEFAULT_UI_PREFERENCES = {
+  theme: 'blue',
+  followSystem: false,
+  compact: false,
+  reduceMotion: false,
+  categoryColors: true
+};
+const VALID_THEMES = new Set(['blue', 'rose', 'light', 'dark', 'pastel']);
+
 const $ = (id) => document.getElementById(id);
 const modalIds = [
   'settingsModal', 'categoriesModal', 'categoryPickerModal', 'favoriteConfirmModal',
   'favoriteEditorModal', 'expenseEditorModal', 'projectEditorModal', 'trashModal',
-  'importPreviewModal', 'resetModal'
+  'importPreviewModal', 'resetModal', 'categoryEditorModal'
 ];
 
 let db = null;
@@ -69,6 +109,12 @@ let lastAddedExpenseId = null;
 let toastTimer = null;
 let applyingUpdate = false;
 let channel = null;
+let uiPreferences = { ...DEFAULT_UI_PREFERENCES };
+let editingCategoryId = null;
+let draftCategoryIcon = '📌';
+let draftCategoryColor = '#64748B';
+let visualViewportBound = false;
+let pendingUiPreferences = null;
 
 class StaleRevisionError extends Error {}
 class DataSafetyError extends Error {}
@@ -107,7 +153,20 @@ function deepClone(value) {
   return globalThis.structuredClone ? structuredClone(value) : JSON.parse(JSON.stringify(value));
 }
 function sum(rows) { return rows.reduce((total, row) => total + Number(row.amount || 0), 0); }
-function categoryObject(name, index = 0) { return { id: uid(), name, hidden: false, order: index }; }
+function normalizeCategoryColor(value, fallback = '#64748B') {
+  const color = String(value || '').trim().toUpperCase();
+  return /^#[0-9A-F]{6}$/.test(color) ? color : fallback;
+}
+function categoryPreset(name, index = 0) {
+  return CATEGORY_PRESETS[name] || {
+    icon: CATEGORY_ICONS[index % CATEGORY_ICONS.length] || '📌',
+    color: CATEGORY_PALETTE[index % CATEGORY_PALETTE.length]?.value || '#64748B'
+  };
+}
+function categoryObject(name, index = 0) {
+  const preset = categoryPreset(name, index);
+  return { id: uid(), name, hidden: false, order: index, icon: preset.icon, color: preset.color };
+}
 function activeExpenses(source = state) { return source.expenses.filter((e) => !e.deletedAt); }
 function trashedExpenses(source = state) { return source.expenses.filter((e) => !!e.deletedAt); }
 
@@ -153,6 +212,16 @@ async function checksumState(source = state) {
   return sha256(stableStringify(exportableState(source)));
 }
 
+function exportableLegacyState(source = state) {
+  const legacy = exportableState(source);
+  legacy.categories = legacy.categories.map(({ icon, color, ...category }) => category);
+  return legacy;
+}
+
+async function checksumLegacyState(source = state) {
+  return sha256(stableStringify(exportableLegacyState(source)));
+}
+
 function normalizeState(raw, { strict = true } = {}) {
   const errors = [];
   const warnings = [];
@@ -162,12 +231,18 @@ function normalizeState(raw, { strict = true } = {}) {
   let categories = Array.isArray(source.categories) ? source.categories : [];
   if (categories.length && typeof categories[0] === 'string') categories = categories.map(categoryObject);
   if (!categories.length) categories = base.categories;
-  categories = categories.map((c, index) => ({
-    id: String(c?.id || uid()),
-    name: String(c?.name || `Categoría ${index + 1}`).trim(),
-    hidden: !!c?.hidden,
-    order: Number.isFinite(Number(c?.order)) ? Number(c.order) : index
-  }));
+  categories = categories.map((c, index) => {
+    const name = String(c?.name || `Categoría ${index + 1}`).trim();
+    const preset = categoryPreset(name, index);
+    return {
+      id: String(c?.id || uid()),
+      name,
+      hidden: !!c?.hidden,
+      order: Number.isFinite(Number(c?.order)) ? Number(c.order) : index,
+      icon: String(c?.icon || preset.icon || '📌').slice(0, 8),
+      color: normalizeCategoryColor(c?.color, preset.color)
+    };
+  });
   const categoryNamesLower = new Set();
   for (const c of categories) {
     if (!c.name) errors.push('Existe una categoría sin nombre.');
@@ -350,6 +425,75 @@ async function putMetaRecord(key, value) {
   await transactionDone(tx);
 }
 
+function normalizeUiPreferences(raw) {
+  const source = raw && typeof raw === 'object' ? raw : {};
+  return {
+    theme: VALID_THEMES.has(source.theme) ? source.theme : DEFAULT_UI_PREFERENCES.theme,
+    followSystem: !!source.followSystem,
+    compact: !!source.compact,
+    reduceMotion: !!source.reduceMotion,
+    categoryColors: source.categoryColors !== false
+  };
+}
+
+function resolvedTheme(preferences = uiPreferences) {
+  if (preferences.followSystem) {
+    return matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  }
+  return VALID_THEMES.has(preferences.theme) ? preferences.theme : 'blue';
+}
+
+function applyUiPreferences(preferences = uiPreferences, { render = false, commit = true } = {}) {
+  const normalized = normalizeUiPreferences(preferences);
+  if (commit) uiPreferences = normalized;
+  const root = document.documentElement;
+  root.dataset.theme = resolvedTheme(normalized);
+  root.dataset.density = normalized.compact ? 'compact' : 'comfortable';
+  root.dataset.reduceMotion = normalized.reduceMotion ? 'true' : 'false';
+  root.dataset.categoryColors = normalized.categoryColors ? 'true' : 'false';
+  const themeMeta = document.querySelector('meta[name="theme-color"]');
+  const themeColors = { blue: '#081f38', rose: '#6f244f', light: '#f6f9fc', dark: '#07111d', pastel: '#6f5aa7' };
+  if (themeMeta) themeMeta.content = themeColors[root.dataset.theme] || themeColors.blue;
+  if (commit) {
+    try { localStorage.setItem(UI_PREFS_KEY, JSON.stringify(normalized)); } catch (_) { /* visual preference only */ }
+  }
+  if (render && state) renderAll();
+}
+
+async function loadUiPreferences() {
+  let stored = null;
+  try { stored = await getMetaRecord('uiPreferences'); } catch (_) { /* use local visual fallback */ }
+  if (!stored) {
+    try { stored = JSON.parse(localStorage.getItem(UI_PREFS_KEY) || 'null'); } catch (_) { stored = null; }
+  }
+  return normalizeUiPreferences(stored);
+}
+
+async function saveUiPreferences(nextPreferences) {
+  const normalized = normalizeUiPreferences(nextPreferences);
+  await putMetaRecord('uiPreferences', normalized);
+  applyUiPreferences(normalized, { render: true });
+  return normalized;
+}
+
+function renderAppearanceSettings() {
+  if (!$('themeOptions')) return;
+  const preferences = pendingUiPreferences || uiPreferences;
+  document.querySelectorAll('[data-theme-choice]').forEach((button) => {
+    const selected = button.dataset.themeChoice === preferences.theme && !preferences.followSystem;
+    button.classList.toggle('selected', selected);
+    button.setAttribute('aria-pressed', String(selected));
+  });
+  $('followSystemThemeInput').checked = !!preferences.followSystem;
+  $('compactModeInput').checked = !!preferences.compact;
+  $('reduceMotionInput').checked = !!preferences.reduceMotion;
+  $('categoryColorsInput').checked = preferences.categoryColors !== false;
+}
+
+function handleSystemThemeChange() {
+  if (uiPreferences.followSystem) applyUiPreferences(uiPreferences, { render: false });
+}
+
 async function readDatabaseBundle() {
   const tx = createTransaction([...DATA_STORES, 'meta']);
   const [expenses, categories, favorites, projects, monthRows, metaRow, activationRow] = await Promise.all([
@@ -388,6 +532,8 @@ async function getLatestSnapshot() {
     if (!normalized.ok) continue;
     const checksum = await checksumState(normalized.data);
     if (checksum === row.checksum) return row;
+    const legacyChecksum = await checksumLegacyState(normalized.data);
+    if (legacyChecksum === row.checksum) return { ...row, migratedVisuals: true };
   }
   return null;
 }
@@ -447,7 +593,10 @@ async function validateMirrorEnvelope(envelope) {
   const normalized = normalizeState(envelope.data, { strict: true });
   if (!normalized.ok) return null;
   const checksum = await checksumState(normalized.data);
-  if (checksum !== envelope.checksum) return null;
+  if (checksum !== envelope.checksum) {
+    const legacyChecksum = await checksumLegacyState(normalized.data);
+    if (legacyChecksum !== envelope.checksum) return null;
+  }
   normalized.data.revision = Number(envelope.revision) || 0;
   return { envelope, data: normalized.data };
 }
@@ -502,6 +651,7 @@ function buildAppMeta(source, checksum, currentMeta, revision) {
   return {
     initialized: true,
     schemaVersion: APP_VERSION,
+    release: APP_RELEASE,
     revision,
     checksum,
     updatedAt: new Date().toISOString(),
@@ -633,10 +783,12 @@ async function verifyLoadedBundle(bundle) {
   const countsMatch =
     Number(bundle.meta.totalExpenseCount) === normalized.data.expenses.length &&
     Number(bundle.meta.activeExpenseCount) === activeExpenses(normalized.data).length;
-  if (checksum !== bundle.meta.checksum) return { status: 'invalid', reason: 'La suma de integridad no coincide.' };
   if (!countsMatch) return { status: 'invalid', reason: 'La cantidad de registros no coincide con los metadatos.' };
   normalized.data.revision = Number(bundle.meta.revision) || 0;
-  return { status: 'valid', data: normalized.data };
+  if (checksum === bundle.meta.checksum) return { status: 'valid', data: normalized.data };
+  const legacyChecksum = await checksumLegacyState(normalized.data);
+  if (legacyChecksum === bundle.meta.checksum) return { status: 'visual-migration', data: normalized.data };
+  return { status: 'invalid', reason: 'La suma de integridad no coincide.' };
 }
 
 async function readLegacyState() {
@@ -671,6 +823,8 @@ async function recoverFromAvailableSources(reason) {
 async function initializeDataLayer() {
   $('bootMessage').textContent = 'Abriendo IndexedDB…';
   db = await openDatabase();
+  uiPreferences = await loadUiPreferences();
+  applyUiPreferences(uiPreferences);
 
   if (navigator.storage?.persist) {
     try { persistentStorageGranted = await navigator.storage.persist(); } catch (_) { persistentStorageGranted = false; }
@@ -689,6 +843,16 @@ async function initializeDataLayer() {
     appMeta = bundle.meta;
     latestSnapshotMeta = await getLatestSnapshot();
     await readBestMirror();
+    return;
+  }
+
+  if (verification.status === 'visual-migration') {
+    $('bootMessage').textContent = 'Aplicando personalización segura a tus categorías…';
+    await forceWriteState(verification.data, 'initialize:migrate-b5-3-visuals', {
+      visualMigrationAt: new Date().toISOString(),
+      release: APP_RELEASE
+    });
+    recoveryNotice = 'Tus datos fueron conservados y las categorías recibieron colores e íconos predeterminados.';
     return;
   }
 
@@ -731,6 +895,12 @@ async function initializeDataLayer() {
 async function reloadFromDatabase({ notify = false } = {}) {
   const bundle = await readDatabaseBundle();
   const verification = await verifyLoadedBundle(bundle);
+  if (verification.status === 'visual-migration') {
+    await forceWriteState(verification.data, 'reload:migrate-b5-3-visuals', { visualMigrationAt: new Date().toISOString(), release: APP_RELEASE });
+    renderAll();
+    if (notify) showToast('Categorías actualizadas sin modificar tus gastos.');
+    return;
+  }
   if (verification.status !== 'valid') {
     const recovered = await recoverFromAvailableSources(verification.reason || 'reload-failure');
     if (!recovered) throw new RecoveryRequiredError(verification.reason || 'No se pudo validar la base.');
@@ -811,9 +981,16 @@ function showToast(message, undo = false) {
 function openModal(id) {
   $(id).hidden = false;
   document.body.classList.add('modal-open');
+  syncVisualViewport();
 }
 function closeModal(id) {
+  const active = document.activeElement;
+  if (active && $(id)?.contains(active) && typeof active.blur === 'function') active.blur();
   $(id).hidden = true;
+  if (id === 'settingsModal' && pendingUiPreferences) {
+    pendingUiPreferences = null;
+    applyUiPreferences(uiPreferences, { render: false });
+  }
   if (!modalIds.some((modalId) => !$(modalId).hidden)) document.body.classList.remove('modal-open');
 }
 function setSelectOptions(element, items, value) {
@@ -884,6 +1061,7 @@ async function deactivateApplication() {
 }
 
 function showUnlockedApplication() {
+  applyUiPreferences(uiPreferences);
   $('bootOverlay').hidden = true;
   $('recoveryOverlay').hidden = true;
   $('activationOverlay').hidden = true;
@@ -910,6 +1088,25 @@ function visibleCategories(source = state) {
   return source.categories.filter((category) => !category.hidden).sort((a, b) => a.order - b.order);
 }
 function categoryNames(source = state) { return visibleCategories(source).map((category) => category.name); }
+function categoryByName(name, source = state) {
+  return source?.categories?.find((category) => category.name === name) || {
+    name: name || 'Otros',
+    icon: '📌',
+    color: '#64748B'
+  };
+}
+function categoryCss(categoryOrName) {
+  const category = typeof categoryOrName === 'string' ? categoryByName(categoryOrName) : categoryOrName;
+  return `--category-color:${normalizeCategoryColor(category?.color)};`;
+}
+function categoryBadge(categoryOrName, { compact = false } = {}) {
+  const category = typeof categoryOrName === 'string' ? categoryByName(categoryOrName) : categoryOrName;
+  return `<span class="category-badge${compact ? ' compact' : ''}" style="${categoryCss(category)}"><span class="category-icon" aria-hidden="true">${escapeHtml(category?.icon || '📌')}</span><span>${escapeHtml(category?.name || 'Otros')}</span></span>`;
+}
+function updateCategoryPickerDisplay(name) {
+  const category = categoryByName(name);
+  $('categoryPickerText').innerHTML = `<span class="picker-category" style="${categoryCss(category)}"><span class="category-icon" aria-hidden="true">${escapeHtml(category.icon || '📌')}</span><span>${escapeHtml(category.name || 'Otros')}</span></span>`;
+}
 function activeProject(source = state) { return source.projects.find((project) => project.active) || source.projects[0]; }
 function projectById(id, source = state) {
   return source.projects.find((project) => project.id === id) || source.projects.find((project) => project.id === 'general');
@@ -1006,6 +1203,7 @@ function renderAll() {
   renderCategories();
   renderTrash();
   renderDiagnostics();
+  renderAppearanceSettings();
   updateAutoDatePreview();
 }
 
@@ -1017,8 +1215,8 @@ function renderSelectors() {
   }));
   if (!$('categoryInput').value || !categories.includes($('categoryInput').value)) {
     $('categoryInput').value = categories[0] || 'Otros';
-    $('categoryPickerText').textContent = categories[0] || 'Otros';
   }
+  updateCategoryPickerDisplay($('categoryInput').value || categories[0] || 'Otros');
   setSelectOptions($('projectInput'), projects, activeProject().id);
   setSelectOptions($('favoriteConfirmProject'), projects, activeProject().id);
   setSelectOptions($('favoriteCategoryInput'), categories.map((name) => ({ value: name, label: name })), $('favoriteCategoryInput').value);
@@ -1093,27 +1291,33 @@ function renderActiveProject() {
 function renderRecent() {
   const valid = state.recentCategories.filter((name) => categoryNames().includes(name)).slice(0, 4);
   $('recentSection').hidden = !valid.length;
-  $('recentCategories').innerHTML = valid.map((name) => `<button type="button" data-recent-category="${escapeHtml(name)}">${escapeHtml(name)}</button>`).join('');
+  $('recentCategories').innerHTML = valid.map((name) => {
+    const category = categoryByName(name);
+    return `<button type="button" data-recent-category="${escapeHtml(name)}" style="${categoryCss(category)}"><span class="category-icon" aria-hidden="true">${escapeHtml(category.icon)}</span><span>${escapeHtml(name)}</span></button>`;
+  }).join('');
   $('recentCategories').querySelectorAll('[data-recent-category]').forEach((button) => {
     button.onclick = () => {
       $('categoryInput').value = button.dataset.recentCategory;
-      $('categoryPickerText').textContent = button.dataset.recentCategory;
+      updateCategoryPickerDisplay(button.dataset.recentCategory);
       $('amountInput').focus();
-      window.scrollTo({ top: $('expenseForm').getBoundingClientRect().top + window.scrollY - 80, behavior: 'smooth' });
+      window.scrollTo({ top: $('expenseForm').getBoundingClientRect().top + window.scrollY - 80, behavior: uiPreferences.reduceMotion ? 'auto' : 'smooth' });
     };
   });
 }
 
 function renderFavorites() {
   $('quickButtons').innerHTML = state.favorites.length
-    ? state.favorites.map((favorite) => `
-      <article class="quick-card">
+    ? state.favorites.map((favorite) => {
+      const category = categoryByName(favorite.category);
+      return `
+      <article class="quick-card" style="${categoryCss(category)}">
         <button class="quick-use" data-use-favorite="${favorite.id}" type="button">
-          <strong>${escapeHtml(favorite.label)}</strong>
-          <span>${money(favorite.amount)} · ${escapeHtml(favorite.category)}</span>
+          <span class="favorite-icon category-icon" aria-hidden="true">${escapeHtml(category.icon)}</span>
+          <span class="favorite-copy"><strong>${escapeHtml(favorite.label)}</strong><span>${money(favorite.amount)} · ${escapeHtml(favorite.category)}</span></span>
         </button>
         <button class="quick-edit" data-edit-favorite="${favorite.id}" type="button" aria-label="Editar favorito">✎</button>
-      </article>`).join('')
+      </article>`;
+    }).join('')
     : '<p class="empty">No hay favoritos. Agrega uno para registrar más rápido.</p>';
 
   $('quickButtons').querySelectorAll('[data-use-favorite]').forEach((button) => {
@@ -1159,11 +1363,14 @@ function renderSummary() {
   const label = period === 'day' ? 'hoy' : period === 'week' ? 'esta semana' : 'este mes';
   $('categoryPeriodTotal').textContent = `Total ${label}: ${money(total)}`;
   $('categorySummary').innerHTML = entries.length
-    ? entries.map(([name, value]) => `
-      <div>
-        <div class="bar-info"><span>${escapeHtml(name)}</span><strong>${money(value)}</strong></div>
+    ? entries.map(([name, value]) => {
+      const category = categoryByName(name);
+      return `
+      <div class="summary-category" style="${categoryCss(category)}">
+        <div class="bar-info"><span><span class="category-icon" aria-hidden="true">${escapeHtml(category.icon)}</span>${escapeHtml(name)}</span><strong>${money(value)}</strong></div>
         <div class="bar-bg"><div class="bar-fill" style="width:${total ? (value / total) * 100 : 0}%"></div></div>
-      </div>`).join('')
+      </div>`;
+    }).join('')
     : '<p class="empty">No hay gastos en este periodo.</p>';
 }
 
@@ -1188,8 +1395,9 @@ function renderHistory() {
     ? rows.map((expense) => {
       const date = new Date(expense.createdAt);
       const time = Number.isNaN(date.getTime()) ? '' : date.toLocaleTimeString('es-BO', { hour: '2-digit', minute: '2-digit' });
-      return `<article class="item">
-        <div><strong>${escapeHtml(expense.detail || expense.category)}</strong><small>${escapeHtml(expense.category)} · ${expense.date} ${time} · ${escapeHtml(projectById(expense.projectId)?.name || 'General')}</small></div>
+      const category = categoryByName(expense.category);
+      return `<article class="item expense-item" style="${categoryCss(category)}">
+        <div class="expense-main"><span class="history-category-icon category-icon" aria-hidden="true">${escapeHtml(category.icon)}</span><div><strong>${escapeHtml(expense.detail || expense.category)}</strong><small>${escapeHtml(expense.category)} · ${expense.date} ${time} · ${escapeHtml(projectById(expense.projectId)?.name || 'General')}</small></div></div>
         <div class="amount-block"><strong>${money(expense.amount)}</strong><div class="item-actions"><button class="mini-btn" data-edit-expense="${expense.id}" type="button">Editar</button><button class="mini-btn delete" data-delete-expense="${expense.id}" type="button">Papelera</button></div></div>
       </article>`;
     }).join('')
@@ -1232,10 +1440,13 @@ async function moveExpenseToTrash(id) {
 function renderTrash() {
   const rows = trashedExpenses().sort((a, b) => String(b.deletedAt).localeCompare(String(a.deletedAt)));
   $('trashList').innerHTML = rows.length
-    ? rows.map((expense) => `<article class="item">
-      <div><strong>${escapeHtml(expense.detail || expense.category)}</strong><small>${escapeHtml(expense.category)} · ${expense.date} · ${money(expense.amount)}</small><span class="trash-tag">Eliminado ${formatDateTime(expense.deletedAt)}</span></div>
+    ? rows.map((expense) => {
+      const category = categoryByName(expense.category);
+      return `<article class="item expense-item" style="${categoryCss(category)}">
+      <div class="expense-main"><span class="history-category-icon category-icon" aria-hidden="true">${escapeHtml(category.icon)}</span><div><strong>${escapeHtml(expense.detail || expense.category)}</strong><small>${escapeHtml(expense.category)} · ${expense.date} · ${money(expense.amount)}</small><span class="trash-tag">Eliminado ${formatDateTime(expense.deletedAt)}</span></div></div>
       <div class="item-actions"><button class="mini-btn" data-restore-expense="${expense.id}" type="button">Restaurar</button><button class="mini-btn delete" data-permanent-delete="${expense.id}" type="button">Eliminar definitivamente</button></div>
-    </article>`).join('')
+    </article>`;
+    }).join('')
     : '<p class="empty">La papelera está vacía.</p>';
 
   $('trashList').querySelectorAll('[data-restore-expense]').forEach((button) => {
@@ -1313,19 +1524,19 @@ function openProjectEditor(id) {
 
 function renderCategories() {
   const rows = [...state.categories].sort((a, b) => a.order - b.order);
-  $('categoriesList').innerHTML = rows.map((category, index) => `<div class="category-item ${category.hidden ? 'is-hidden' : ''}">
-    <span>${escapeHtml(category.name)}${category.hidden ? ' · Oculta' : ''}</span>
+  $('categoriesList').innerHTML = rows.map((category, index) => `<div class="category-item ${category.hidden ? 'is-hidden' : ''}" style="${categoryCss(category)}">
+    <div class="category-row-main"><span class="category-list-icon category-icon" aria-hidden="true">${escapeHtml(category.icon || '📌')}</span><span>${escapeHtml(category.name)}${category.hidden ? ' · Oculta' : ''}</span></div>
     <div class="category-actions">
-      <button class="mini-btn" data-up-category="${category.id}" type="button" ${index === 0 ? 'disabled' : ''}>↑</button>
-      <button class="mini-btn" data-down-category="${category.id}" type="button" ${index === rows.length - 1 ? 'disabled' : ''}>↓</button>
-      <button class="mini-btn" data-rename-category="${category.id}" type="button">Editar</button>
+      <button class="mini-btn" data-up-category="${category.id}" type="button" ${index === 0 ? 'disabled' : ''} aria-label="Subir categoría">↑</button>
+      <button class="mini-btn" data-down-category="${category.id}" type="button" ${index === rows.length - 1 ? 'disabled' : ''} aria-label="Bajar categoría">↓</button>
+      <button class="mini-btn" data-edit-category="${category.id}" type="button">Personalizar</button>
       <button class="mini-btn" data-toggle-category="${category.id}" type="button" ${category.name === 'Otros' ? 'disabled' : ''}>${category.hidden ? 'Mostrar' : 'Ocultar'}</button>
     </div>
   </div>`).join('');
 
   $('categoriesList').querySelectorAll('[data-up-category]').forEach((button) => { button.onclick = () => moveCategory(button.dataset.upCategory, -1); });
   $('categoriesList').querySelectorAll('[data-down-category]').forEach((button) => { button.onclick = () => moveCategory(button.dataset.downCategory, 1); });
-  $('categoriesList').querySelectorAll('[data-rename-category]').forEach((button) => { button.onclick = () => renameCategory(button.dataset.renameCategory); });
+  $('categoriesList').querySelectorAll('[data-edit-category]').forEach((button) => { button.onclick = () => openCategoryEditor(button.dataset.editCategory); });
   $('categoriesList').querySelectorAll('[data-toggle-category]').forEach((button) => { button.onclick = () => toggleCategory(button.dataset.toggleCategory); });
 }
 
@@ -1340,24 +1551,73 @@ async function moveCategory(id, delta) {
   if (result.ok) showToast('Orden actualizado.');
 }
 
-async function renameCategory(id) {
+function renderCategoryEditorChoices() {
+  $('categoryIconOptions').innerHTML = CATEGORY_ICONS.map((icon) => `<button class="icon-option ${icon === draftCategoryIcon ? 'selected' : ''}" data-category-icon="${escapeHtml(icon)}" type="button" aria-label="Usar ícono ${escapeHtml(icon)}">${escapeHtml(icon)}</button>`).join('');
+  $('categoryColorOptions').innerHTML = CATEGORY_PALETTE.map((color) => `<button class="color-option ${color.value === draftCategoryColor ? 'selected' : ''}" data-category-color="${color.value}" type="button" title="${escapeHtml(color.label)}" aria-label="Color ${escapeHtml(color.label)}"><span style="background:${color.value}"></span></button>`).join('');
+  $('categoryIconOptions').querySelectorAll('[data-category-icon]').forEach((button) => {
+    button.onclick = () => {
+      draftCategoryIcon = button.dataset.categoryIcon;
+      renderCategoryEditorChoices();
+      updateCategoryEditorPreview();
+    };
+  });
+  $('categoryColorOptions').querySelectorAll('[data-category-color]').forEach((button) => {
+    button.onclick = () => {
+      draftCategoryColor = normalizeCategoryColor(button.dataset.categoryColor);
+      renderCategoryEditorChoices();
+      updateCategoryEditorPreview();
+    };
+  });
+}
+
+function updateCategoryEditorPreview() {
+  const name = $('editCategoryName').value.trim() || 'Categoría';
+  $('categoryEditorPreview').innerHTML = `<span class="category-badge preview" style="--category-color:${draftCategoryColor}"><span class="category-icon" aria-hidden="true">${escapeHtml(draftCategoryIcon)}</span><span>${escapeHtml(name)}</span></span>`;
+}
+
+function openCategoryEditor(id) {
   const category = state.categories.find((item) => item.id === id);
   if (!category) return;
-  const name = prompt('Nuevo nombre:', category.name)?.trim();
-  if (!name || name === category.name) return;
-  if (state.categories.some((item) => item.name.toLowerCase() === name.toLowerCase())) {
+  editingCategoryId = id;
+  draftCategoryIcon = category.icon || categoryPreset(category.name, category.order).icon;
+  draftCategoryColor = normalizeCategoryColor(category.color, categoryPreset(category.name, category.order).color);
+  $('editCategoryName').value = category.name;
+  renderCategoryEditorChoices();
+  updateCategoryEditorPreview();
+  closeModal('categoriesModal');
+  openModal('categoryEditorModal');
+}
+
+async function saveCategoryEditor() {
+  const category = state.categories.find((item) => item.id === editingCategoryId);
+  if (!category) return;
+  const name = $('editCategoryName').value.trim();
+  if (!name) {
+    showToast('Escribe un nombre para la categoría.');
+    return;
+  }
+  if (state.categories.some((item) => item.id !== editingCategoryId && item.name.toLowerCase() === name.toLowerCase())) {
     showToast('Esa categoría ya existe.');
     return;
   }
   const oldName = category.name;
-  const result = await applyMutation('category:rename', (draft) => {
-    const item = draft.categories.find((row) => row.id === id);
+  const result = await applyMutation('category:customize', (draft) => {
+    const item = draft.categories.find((row) => row.id === editingCategoryId);
+    if (!item) return false;
     item.name = name;
-    draft.expenses.forEach((expense) => { if (expense.category === oldName) expense.category = name; });
-    draft.favorites.forEach((favorite) => { if (favorite.category === oldName) favorite.category = name; });
-    draft.recentCategories = draft.recentCategories.map((recent) => recent === oldName ? name : recent);
+    item.icon = draftCategoryIcon || '📌';
+    item.color = normalizeCategoryColor(draftCategoryColor);
+    if (name !== oldName) {
+      draft.expenses.forEach((expense) => { if (expense.category === oldName) expense.category = name; });
+      draft.favorites.forEach((favorite) => { if (favorite.category === oldName) favorite.category = name; });
+      draft.recentCategories = draft.recentCategories.map((recent) => recent === oldName ? name : recent);
+    }
   });
-  if (result.ok) showToast('Categoría actualizada.');
+  if (result.ok) {
+    closeModal('categoryEditorModal');
+    openModal('categoriesModal');
+    showToast('Categoría personalizada.');
+  }
 }
 
 async function toggleCategory(id) {
@@ -1384,13 +1644,13 @@ function renderCategoryPicker() {
     })
     .slice(0, 6);
   const all = visible.filter((category) => !frequent.some((item) => item.id === category.id));
-  const html = (category) => `<button class="category-option ${category.name === selected ? 'selected' : ''}" data-category-option="${escapeHtml(category.name)}" type="button">${escapeHtml(category.name)}</button>`;
+  const html = (category) => `<button class="category-option ${category.name === selected ? 'selected' : ''}" style="${categoryCss(category)}" data-category-option="${escapeHtml(category.name)}" type="button"><span class="category-icon" aria-hidden="true">${escapeHtml(category.icon || '📌')}</span><span>${escapeHtml(category.name)}</span></button>`;
   $('frequentCategoryOptions').innerHTML = frequent.map(html).join('') || '<span class="empty">Sin categorías frecuentes.</span>';
   $('categoryOptions').innerHTML = all.map(html).join('') || '<span class="empty">No hay otras categorías.</span>';
   document.querySelectorAll('[data-category-option]').forEach((button) => {
     button.onclick = () => {
       $('categoryInput').value = button.dataset.categoryOption;
-      $('categoryPickerText').textContent = button.dataset.categoryOption;
+      updateCategoryPickerDisplay(button.dataset.categoryOption);
       closeModal('categoryPickerModal');
       renderCategoryPicker();
     };
@@ -1411,7 +1671,11 @@ function renderDiagnostics() {
   const backupDate = appMeta.lastExternalBackupAt ? formatDateTime(appMeta.lastExternalBackupAt) : 'Pendiente';
   const snapshotDate = latestSnapshotMeta?.createdAt ? formatDateTime(latestSnapshotMeta.createdAt) : 'Pendiente';
   const mirrorText = mirrorStatus.current ? (mirrorStatus.previous ? 'Doble copia' : 'Copia actual') : 'No disponible';
+  const themeNames = { blue: 'Azul elegante', rose: 'Rosa suave', light: 'Claro moderno', dark: 'Oscuro elegante', pastel: 'Juvenil pastel' };
+  const appearanceText = uiPreferences.followSystem ? `Automático (${themeNames[resolvedTheme(uiPreferences)]})` : themeNames[uiPreferences.theme] || uiPreferences.theme;
   $('storageStatusGrid').innerHTML = [
+    ['Versión', `B${APP_RELEASE}`, 'status-ok'],
+    ['Apariencia', appearanceText, ''],
     ['Almacenamiento', persistentStorageGranted ? 'Persistente' : 'Estándar', persistentStorageGranted ? 'status-ok' : 'status-warn'],
     ['Último guardado', formatDateTime(appMeta.updatedAt), ''],
     ['Gastos activos', String(appMeta.activeExpenseCount ?? activeExpenses().length), ''],
@@ -1694,8 +1958,8 @@ function buildExpenseWorkbook(rows, periodLabel) {
   const rootRels = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="docProps/core.xml"/><Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties" Target="docProps/app.xml"/></Relationships>`;
   const contentTypes = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/><Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/><Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/></Types>`;
   const nowIso = exportedAt.toISOString();
-  const coreXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"><dc:title>Control de Presupuesto</dc:title><dc:creator>Control de Presupuesto B5.2</dc:creator><cp:lastModifiedBy>Control de Presupuesto B5.2</cp:lastModifiedBy><dcterms:created xsi:type="dcterms:W3CDTF">${nowIso}</dcterms:created><dcterms:modified xsi:type="dcterms:W3CDTF">${nowIso}</dcterms:modified></cp:coreProperties>`;
-  const appXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties" xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes"><Application>Control de Presupuesto B5.2</Application><DocSecurity>0</DocSecurity><AppVersion>5.2</AppVersion></Properties>`;
+  const coreXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"><dc:title>Control de Presupuesto</dc:title><dc:creator>Control de Presupuesto B5.3</dc:creator><cp:lastModifiedBy>Control de Presupuesto B5.3</cp:lastModifiedBy><dcterms:created xsi:type="dcterms:W3CDTF">${nowIso}</dcterms:created><dcterms:modified xsi:type="dcterms:W3CDTF">${nowIso}</dcterms:modified></cp:coreProperties>`;
+  const appXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties" xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes"><Application>Control de Presupuesto B5.3</Application><DocSecurity>0</DocSecurity><AppVersion>5.3</AppVersion></Properties>`;
 
   return {
     blob: createStoredZip([
@@ -1765,7 +2029,10 @@ async function parseBackupFile(file) {
   if (!normalized.ok) throw new DataSafetyError(normalized.errors.join(' '));
   if (isB5Envelope) {
     const checksum = await checksumState(normalized.data);
-    if (checksum !== parsed.checksum) throw new DataSafetyError('La suma de verificación del respaldo no coincide.');
+    if (checksum !== parsed.checksum) {
+      const legacyChecksum = await checksumLegacyState(normalized.data);
+      if (legacyChecksum !== parsed.checksum) throw new DataSafetyError('La suma de verificación del respaldo no coincide.');
+    }
   }
   return {
     data: normalized.data,
@@ -2000,19 +2267,35 @@ async function checkForUpdate() {
   }
   const registration = await navigator.serviceWorker.getRegistration();
   if (!registration) {
-    showToast('Servicio de actualización no registrado.');
+    showToast('Servicio de actualización no registrado. Recarga la página desde Chrome.');
     return;
   }
+  let remoteRelease = null;
+  try {
+    const response = await fetch(`./version.json?check=${Date.now()}`, { cache: 'no-store' });
+    if (response.ok) remoteRelease = String((await response.json()).release || '');
+  } catch (_) { /* La aplicación puede estar sin conexión. */ }
+
   try {
     await registration.update();
+    await new Promise((resolve) => setTimeout(resolve, 900));
     if (registration.waiting) {
-      if (confirm('Hay una actualización lista. Tus datos ya fueron verificados y respaldados internamente. ¿Aplicarla ahora?')) {
+      if (confirm(`Hay una actualización lista${remoteRelease ? ` (${remoteRelease})` : ''}. Tus datos ya fueron verificados y respaldados internamente. ¿Aplicarla ahora?`)) {
         applyingUpdate = true;
         registration.waiting.postMessage({ type: 'SKIP_WAITING' });
       }
-    } else {
-      showToast('Ya tienes la versión disponible más reciente.');
+      return;
     }
+    if (registration.installing) {
+      showToast('La actualización se está preparando. Cierra y vuelve a abrir la aplicación en unos segundos.');
+      return;
+    }
+    if (remoteRelease && remoteRelease !== APP_RELEASE) {
+      showStorageWarning(`GitHub ya publica la versión ${remoteRelease}, pero el celular todavía conserva ${APP_RELEASE}. Cierra todas las pestañas de la app y vuelve a abrirla desde Chrome.`);
+      showToast(`Nueva versión publicada: ${remoteRelease}.`);
+      return;
+    }
+    showToast(`Ya tienes la versión B${APP_RELEASE}.`);
   } catch (error) {
     showToast(`No se pudo buscar la actualización: ${error.message}`);
   }
@@ -2023,7 +2306,7 @@ function registerServiceWorker() {
   navigator.serviceWorker.addEventListener('controllerchange', () => {
     if (applyingUpdate) location.reload();
   });
-  navigator.serviceWorker.register('./sw.js?v=5').then((registration) => {
+  navigator.serviceWorker.register(`./sw.js?v=${APP_RELEASE}`).then((registration) => {
     registration.addEventListener('updatefound', () => {
       const worker = registration.installing;
       if (!worker) return;
@@ -2035,6 +2318,37 @@ function registerServiceWorker() {
     });
   }).catch((error) => {
     showStorageWarning(`La aplicación funciona, pero el modo sin internet no pudo activarse: ${error.message}`);
+  });
+}
+
+function syncVisualViewport() {
+  const viewport = window.visualViewport;
+  const height = Math.max(320, Math.round(viewport?.height || window.innerHeight));
+  const top = Math.max(0, Math.round(viewport?.offsetTop || 0));
+  document.documentElement.style.setProperty('--app-vh', `${height}px`);
+  document.documentElement.style.setProperty('--app-vv-top', `${top}px`);
+  const keyboardOpen = !!viewport && height < window.innerHeight * 0.82;
+  document.body.classList.toggle('keyboard-open', keyboardOpen);
+}
+
+function setupMobileViewport() {
+  if (visualViewportBound) return;
+  visualViewportBound = true;
+  syncVisualViewport();
+  window.addEventListener('resize', syncVisualViewport, { passive: true });
+  window.visualViewport?.addEventListener('resize', syncVisualViewport, { passive: true });
+  window.visualViewport?.addEventListener('scroll', syncVisualViewport, { passive: true });
+  document.addEventListener('focusin', (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLInputElement || target instanceof HTMLSelectElement || target instanceof HTMLTextAreaElement)) return;
+    setTimeout(() => {
+      syncVisualViewport();
+      const rect = target.getBoundingClientRect();
+      const visibleHeight = window.visualViewport?.height || window.innerHeight;
+      if (rect.bottom > visibleHeight - 88 || rect.top < 18) {
+        target.scrollIntoView({ block: 'center', behavior: uiPreferences.reduceMotion ? 'auto' : 'smooth' });
+      }
+    }, 220);
   });
 }
 
@@ -2079,7 +2393,12 @@ function bindEvents() {
       $('amountInput').value = '';
       $('detailInput').value = '';
       resetDateMode();
-      $('amountInput').focus();
+      if (matchMedia('(max-width: 620px)').matches) {
+        document.activeElement?.blur?.();
+        syncVisualViewport();
+      } else {
+        $('amountInput').focus();
+      }
     }
   };
 
@@ -2118,6 +2437,8 @@ function bindEvents() {
     latestSnapshotMeta = await getLatestSnapshot();
     await readBestMirror();
     renderDiagnostics();
+    pendingUiPreferences = { ...uiPreferences };
+    renderAppearanceSettings();
     openModal('settingsModal');
   };
   $('settingsMonthInput').onchange = loadSettingsMonth;
@@ -2134,6 +2455,38 @@ function bindEvents() {
     }
   };
 
+  document.querySelectorAll('[data-theme-choice]').forEach((button) => {
+    button.onclick = () => {
+      pendingUiPreferences = { ...(pendingUiPreferences || uiPreferences), theme: button.dataset.themeChoice, followSystem: false };
+      applyUiPreferences(pendingUiPreferences, { render: false, commit: false });
+      renderAppearanceSettings();
+    };
+  });
+  const previewAppearance = () => {
+    pendingUiPreferences = {
+      ...(pendingUiPreferences || uiPreferences),
+      followSystem: $('followSystemThemeInput').checked,
+      compact: $('compactModeInput').checked,
+      reduceMotion: $('reduceMotionInput').checked,
+      categoryColors: $('categoryColorsInput').checked
+    };
+    applyUiPreferences(pendingUiPreferences, { render: true, commit: false });
+    renderAppearanceSettings();
+  };
+  $('followSystemThemeInput').onchange = previewAppearance;
+  $('compactModeInput').onchange = previewAppearance;
+  $('reduceMotionInput').onchange = previewAppearance;
+  $('categoryColorsInput').onchange = previewAppearance;
+  $('saveAppearanceBtn').onclick = async () => {
+    try {
+      await saveUiPreferences(pendingUiPreferences || uiPreferences);
+      pendingUiPreferences = null;
+      showToast('Apariencia guardada en este dispositivo.');
+    } catch (error) {
+      showToast(`No se pudo guardar la apariencia: ${error.message}`);
+    }
+  };
+
   $('openCategoriesBtn').onclick = () => { closeModal('settingsModal'); openModal('categoriesModal'); };
   $('addCategoryBtn').onclick = async () => {
     const name = $('newCategoryInput').value.trim();
@@ -2147,9 +2500,13 @@ function bindEvents() {
     });
     if (result.ok) {
       $('newCategoryInput').value = '';
-      showToast('Categoría agregada.');
+      const added = state.categories.find((category) => category.name === name);
+      showToast('Categoría agregada. Ahora puedes elegir su color e ícono.');
+      if (added) openCategoryEditor(added.id);
     }
   };
+  $('editCategoryName').oninput = updateCategoryEditorPreview;
+  $('saveCategoryEditBtn').onclick = saveCategoryEditor;
 
   $('backupBtn').onclick = exportBackup;
   $('importBtn').onclick = () => $('importFileInput').click();
@@ -2292,6 +2649,10 @@ function bindEvents() {
 }
 
 async function bootstrap() {
+  setupMobileViewport();
+  const colorScheme = matchMedia('(prefers-color-scheme: dark)');
+  if (typeof colorScheme.addEventListener === 'function') colorScheme.addEventListener('change', handleSystemThemeChange);
+  else if (typeof colorScheme.addListener === 'function') colorScheme.addListener(handleSystemThemeChange);
   bindEvents();
   setupBroadcastChannel();
   try {

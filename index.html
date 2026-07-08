@@ -6,9 +6,21 @@
   <meta name="theme-color" content="#081f38" />
   <meta name="description" content="Control local de gastos, presupuestos y proyectos con respaldo reforzado." />
   <title>Control de Presupuesto</title>
-  <link rel="manifest" href="manifest.json?v=5.1" />
+  <link rel="manifest" href="manifest.json?v=5.3" />
   <link rel="icon" href="icon-v5.svg" type="image/svg+xml" />
-  <link rel="stylesheet" href="styles.css?v=5.1" />
+  <script>
+    (() => {
+      try {
+        const saved = JSON.parse(localStorage.getItem('control_presupuesto_ui_prefs_v1') || '{}');
+        const systemDark = matchMedia('(prefers-color-scheme: dark)').matches;
+        const theme = saved.followSystem ? (systemDark ? 'dark' : 'light') : (saved.theme || 'blue');
+        document.documentElement.dataset.theme = theme;
+        if (saved.compact) document.documentElement.dataset.density = 'compact';
+        if (saved.reduceMotion) document.documentElement.dataset.reduceMotion = 'true';
+      } catch (_) { document.documentElement.dataset.theme = 'blue'; }
+    })();
+  </script>
+  <link rel="stylesheet" href="styles.css?v=5.3" />
 </head>
 <body>
   <div id="bootOverlay" class="system-overlay" aria-live="polite">
@@ -116,7 +128,7 @@
       <section id="projectsTab" class="tab-content"><div class="panel"><h2>Proyecto o viaje</h2><p class="section-help project-help">Separa gastos de viajes, cursos, comisiones u otras actividades sin perder el total general.</p><form id="projectForm" class="form compact-form"><div class="field"><label for="projectNameInput">Nombre</label><input id="projectNameInput" type="text" placeholder="Ej. Viaje a Cochabamba" required /></div><div class="field"><label for="projectBudgetInput">Presupuesto <span class="optional">(opcional)</span></label><input id="projectBudgetInput" type="text" inputmode="decimal" pattern="[0-9.,]*" placeholder="Ej. 1200" /></div><button class="main-btn full" type="submit">Crear y activar proyecto</button></form><div id="projectList" class="project-list"></div></div></section>
     </main>
 
-    <footer class="app-footer"><span>Control de Presupuesto B5.2 · almacenamiento protegido</span><button id="checkUpdateBtn" class="link-btn" type="button">Buscar actualización</button></footer>
+    <footer class="app-footer"><span>Control de Presupuesto B5.3 · estabilización y personalización</span><button id="checkUpdateBtn" class="link-btn" type="button">Buscar actualización</button></footer>
   </div>
 
   <div id="toast" class="toast" hidden></div>
@@ -125,12 +137,30 @@
     <section class="settings-section"><h3>Presupuesto mensual</h3><label for="settingsMonthInput">Mes</label><input id="settingsMonthInput" type="month" /><label for="monthlyBudgetInput">Presupuesto disponible</label><input id="monthlyBudgetInput" type="text" inputmode="decimal" pattern="[0-9.,]*" /><label for="savingsGoalInput">Objetivo de ahorro</label><input id="savingsGoalInput" type="text" inputmode="decimal" pattern="[0-9.,]*" /><p class="calculation-note">Monto utilizable = presupuesto menos objetivo de ahorro.</p><button id="saveSettingsBtn" class="main-btn full" type="button">Guardar configuración</button></section>
     <section class="settings-section"><h3>Estado de los datos</h3><div id="storageStatusGrid" class="status-grid"></div><button id="verifyIntegrityBtn" class="secondary-btn" type="button">Comprobar integridad</button></section>
     <section class="settings-section"><h3>Respaldo y recuperación</h3><button id="backupBtn" class="secondary-btn" type="button">Crear respaldo completo</button><button id="importBtn" class="secondary-btn" type="button">Importar respaldo</button><input id="importFileInput" type="file" accept="application/json" hidden /><button id="openTrashBtn" class="secondary-btn" type="button">Abrir papelera</button></section>
-    <section class="settings-section"><h3>Personalización</h3><button id="openCategoriesBtn" class="secondary-btn" type="button">Administrar categorías</button></section>
+    <section class="settings-section appearance-settings">
+      <h3>Apariencia</h3>
+      <p class="calculation-note">Cambia solamente la presentación. Tus gastos, presupuestos y respaldos no se modifican.</p>
+      <div id="themeOptions" class="theme-grid" role="radiogroup" aria-label="Tema visual">
+        <button class="theme-card" data-theme-choice="blue" type="button"><span class="theme-swatch theme-blue"></span><strong>Azul elegante</strong><small>Formal y financiero</small></button>
+        <button class="theme-card" data-theme-choice="rose" type="button"><span class="theme-swatch theme-rose"></span><strong>Rosa suave</strong><small>Claro y delicado</small></button>
+        <button class="theme-card" data-theme-choice="light" type="button"><span class="theme-swatch theme-light"></span><strong>Claro moderno</strong><small>Más blanco y luminoso</small></button>
+        <button class="theme-card" data-theme-choice="dark" type="button"><span class="theme-swatch theme-dark"></span><strong>Oscuro elegante</strong><small>Menor brillo nocturno</small></button>
+        <button class="theme-card" data-theme-choice="pastel" type="button"><span class="theme-swatch theme-pastel"></span><strong>Juvenil pastel</strong><small>Amigable y colorido</small></button>
+      </div>
+      <label class="switch-row"><span><strong>Usar tema del celular</strong><small>Cambia automáticamente entre claro y oscuro.</small></span><input id="followSystemThemeInput" type="checkbox" /></label>
+      <label class="switch-row"><span><strong>Vista compacta</strong><small>Reduce espacios para mostrar más información.</small></span><input id="compactModeInput" type="checkbox" /></label>
+      <label class="switch-row"><span><strong>Reducir animaciones</strong><small>Útil si prefieres transiciones más discretas.</small></span><input id="reduceMotionInput" type="checkbox" /></label>
+      <label class="switch-row"><span><strong>Colores en categorías</strong><small>Muestra color e ícono para reconocerlas rápidamente.</small></span><input id="categoryColorsInput" type="checkbox" checked /></label>
+      <button id="saveAppearanceBtn" class="main-btn full" type="button">Guardar apariencia</button>
+      <button id="openCategoriesBtn" class="secondary-btn" type="button">Administrar categorías, colores e íconos</button>
+    </section>
     <section class="settings-section"><h3>Activación</h3><p id="activationStatusText" class="calculation-note">Aplicación activada en este dispositivo.</p><button id="deactivateBtn" class="secondary-btn" type="button">Desactivar aplicación</button></section>
     <button id="resetBtn" class="danger-btn" type="button">Borrar todos los datos financieros</button>
   </div></div>
 
-  <div id="categoriesModal" class="modal" hidden><div class="modal-card"><button class="close" data-close="categoriesModal" type="button">×</button><h2>Administrar categorías</h2><p class="modal-help">Cambia el nombre, orden o visibilidad. “Otros” permanece como respaldo.</p><div class="inline-form"><input id="newCategoryInput" type="text" placeholder="Ej. Mascotas" /><button id="addCategoryBtn" class="text-btn" type="button">Agregar</button></div><div id="categoriesList" class="category-list"></div></div></div>
+  <div id="categoriesModal" class="modal" hidden><div class="modal-card"><button class="close" data-close="categoriesModal" type="button">×</button><h2>Administrar categorías</h2><p class="modal-help">Personaliza nombre, color, ícono, orden y visibilidad. “Otros” permanece como respaldo.</p><div class="inline-form"><input id="newCategoryInput" type="text" placeholder="Ej. Mascotas" /><button id="addCategoryBtn" class="text-btn" type="button">Agregar</button></div><div id="categoriesList" class="category-list"></div></div></div>
+
+  <div id="categoryEditorModal" class="modal bottom-modal" hidden><div class="modal-card compact-modal"><button class="close" data-close="categoryEditorModal" type="button">×</button><h2>Personalizar categoría</h2><div id="categoryEditorPreview" class="category-editor-preview"></div><label for="editCategoryName">Nombre</label><input id="editCategoryName" type="text" maxlength="40" /><label>Ícono</label><div id="categoryIconOptions" class="icon-picker" role="radiogroup" aria-label="Ícono de categoría"></div><label>Color</label><div id="categoryColorOptions" class="color-picker" role="radiogroup" aria-label="Color de categoría"></div><button id="saveCategoryEditBtn" class="main-btn full" type="button">Guardar categoría</button></div></div>
 
   <div id="categoryPickerModal" class="modal bottom-modal" hidden><div class="modal-card compact-modal"><button class="close" data-close="categoryPickerModal" type="button">×</button><h2>Selecciona una categoría</h2><p class="category-group-title">Frecuentes</p><div id="frequentCategoryOptions" class="category-options"></div><p class="category-group-title">Todas</p><div id="categoryOptions" class="category-options"></div></div></div>
 
@@ -148,6 +178,6 @@
 
   <div id="resetModal" class="modal" hidden><div class="modal-card compact-modal"><button class="close" data-close="resetModal" type="button">×</button><h2>Borrar datos financieros</h2><p id="resetWarningText" class="danger-note"></p><p class="modal-help">Se creará una copia interna antes del borrado. Escribe <strong>BORRAR</strong> para confirmar.</p><input id="resetConfirmInput" type="text" autocomplete="off" placeholder="BORRAR" /><button id="confirmResetBtn" class="danger-btn" type="button">Confirmar borrado</button></div></div>
 
-  <script src="app.js?v=5.1"></script>
+  <script src="app.js?v=5.3"></script>
 </body>
 </html>
