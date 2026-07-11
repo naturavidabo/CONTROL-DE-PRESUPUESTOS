@@ -1,19 +1,19 @@
 'use strict';
 
-const APP_VERSION = 5;
-const APP_RELEASE = '5.3';
+const APP_VERSION = 6;
+const APP_RELEASE = '6.0';
 const UI_PREFS_KEY = 'control_presupuesto_ui_prefs_v1';
 const DB_NAME = 'control_presupuesto_b5';
-const DB_VERSION = 5;
+const DB_VERSION = 6;
 const LEGACY_STORAGE_KEY = 'control_presupuesto_v1';
 const MIRROR_CURRENT_KEY = 'control_presupuesto_b5_mirror_current';
 const MIRROR_PREVIOUS_KEY = 'control_presupuesto_b5_mirror_previous';
 const ACTIVATION_HASH = '77fdb82a65f1267b496683a0f44ffde77144060f1dac8989f3b687fde132fe4a';
-const CHANNEL_NAME = 'control-presupuesto-b5';
+const CHANNEL_NAME = 'control-presupuesto-b6';
 const MAX_SNAPSHOTS = 20;
 const MAX_AUDIT_ROWS = 500;
 
-const DATA_STORES = ['expenses', 'categories', 'favorites', 'projects', 'monthSettings'];
+const DATA_STORES = ['expenses', 'categories', 'favorites', 'projects', 'monthSettings', 'incomes', 'incomeCategories'];
 const ALL_TX_STORES = [...DATA_STORES, 'meta', 'audit'];
 const DEFAULT_CATEGORY_NAMES = [
   'Alimentación',
@@ -43,6 +43,26 @@ const DEFAULT_FAVORITES = [
   { label: 'Almuerzo', amount: 20, category: 'Alimentación' },
   { label: 'Gaseosa', amount: 5, category: 'Bebidas / antojos' }
 ];
+
+const DEFAULT_INCOME_CATEGORY_NAMES = [
+  'Sueldo',
+  'Bono',
+  'Trabajo extra',
+  'Venta',
+  'Devolución',
+  'Ayuda familiar',
+  'Otros ingresos'
+];
+const INCOME_CATEGORY_PRESETS = {
+  'Sueldo': { icon: '💼', color: '#22C55E' },
+  'Bono': { icon: '🎁', color: '#0EA5E9' },
+  'Trabajo extra': { icon: '🛠️', color: '#8B5CF6' },
+  'Venta': { icon: '🛒', color: '#F59E0B' },
+  'Devolución': { icon: '↩️', color: '#14B8A6' },
+  'Ayuda familiar': { icon: '🤝', color: '#EC4899' },
+  'Otros ingresos': { icon: '💰', color: '#64748B' }
+};
+const INCOME_ICONS = ['💼', '🎁', '🛠️', '🛒', '↩️', '🤝', '💰', '🏦', '📈', '💵', '🧾', '📌'];
 
 const CATEGORY_PALETTE = [
   { value: '#F59E0B', label: 'Naranja' },
@@ -85,8 +105,8 @@ const VALID_THEMES = new Set(['blue', 'rose', 'light', 'dark', 'pastel']);
 const $ = (id) => document.getElementById(id);
 const modalIds = [
   'settingsModal', 'categoriesModal', 'categoryPickerModal', 'favoriteConfirmModal',
-  'favoriteEditorModal', 'expenseEditorModal', 'projectEditorModal', 'trashModal',
-  'importPreviewModal', 'resetModal', 'categoryEditorModal'
+  'favoriteEditorModal', 'expenseEditorModal', 'incomeEditorModal', 'projectEditorModal', 'trashModal',
+  'importPreviewModal', 'resetModal', 'categoryEditorModal', 'incomeCategoriesModal', 'incomeCategoryEditorModal'
 ];
 
 let db = null;
@@ -101,9 +121,11 @@ let recoveryNotice = '';
 let pendingImport = null;
 let isSaving = false;
 let manualDate = false;
+let manualIncomeDate = false;
 let selectedFavoriteId = null;
 let editingFavoriteId = null;
 let editingExpenseId = null;
+let editingIncomeId = null;
 let editingProjectId = null;
 let lastAddedExpenseId = null;
 let toastTimer = null;
@@ -111,8 +133,11 @@ let applyingUpdate = false;
 let channel = null;
 let uiPreferences = { ...DEFAULT_UI_PREFERENCES };
 let editingCategoryId = null;
+let editingIncomeCategoryId = null;
 let draftCategoryIcon = '📌';
 let draftCategoryColor = '#64748B';
+let draftIncomeCategoryIcon = '💰';
+let draftIncomeCategoryColor = '#22C55E';
 let visualViewportBound = false;
 let pendingUiPreferences = null;
 
@@ -167,19 +192,34 @@ function categoryObject(name, index = 0) {
   const preset = categoryPreset(name, index);
   return { id: uid(), name, hidden: false, order: index, icon: preset.icon, color: preset.color };
 }
-function activeExpenses(source = state) { return source.expenses.filter((e) => !e.deletedAt); }
-function trashedExpenses(source = state) { return source.expenses.filter((e) => !!e.deletedAt); }
+function incomeCategoryPreset(name, index = 0) {
+  return INCOME_CATEGORY_PRESETS[name] || {
+    icon: INCOME_ICONS[index % INCOME_ICONS.length] || '💰',
+    color: CATEGORY_PALETTE[index % CATEGORY_PALETTE.length]?.value || '#22C55E'
+  };
+}
+function incomeCategoryObject(name, index = 0) {
+  const preset = incomeCategoryPreset(name, index);
+  return { id: uid(), name, hidden: false, order: index, icon: preset.icon, color: preset.color };
+}
+function activeExpenses(source = state) { return (source.expenses || []).filter((e) => !e.deletedAt); }
+function trashedExpenses(source = state) { return (source.expenses || []).filter((e) => !!e.deletedAt); }
+function activeIncomes(source = state) { return (source.incomes || []).filter((e) => !e.deletedAt); }
+function trashedIncomes(source = state) { return (source.incomes || []).filter((e) => !!e.deletedAt); }
 
 function initialState() {
   return {
     version: APP_VERSION,
     revision: 0,
     expenses: [],
+    incomes: [],
     categories: DEFAULT_CATEGORY_NAMES.map(categoryObject),
+    incomeCategories: DEFAULT_INCOME_CATEGORY_NAMES.map(incomeCategoryObject),
     favorites: DEFAULT_FAVORITES.map((f) => ({ id: uid(), ...f })),
     monthSettings: {},
     projects: [{ id: 'general', name: 'Gastos generales', budget: 0, active: true }],
-    recentCategories: []
+    recentCategories: [],
+    recentIncomeCategories: []
   };
 }
 
@@ -199,12 +239,27 @@ async function sha256(text) {
 function exportableState(source = state) {
   return {
     version: APP_VERSION,
-    expenses: [...source.expenses].map((e) => ({ ...e })).sort((a, b) => a.id.localeCompare(b.id)),
-    categories: [...source.categories].map((c) => ({ ...c })).sort((a, b) => a.id.localeCompare(b.id)),
-    favorites: [...source.favorites].map((f) => ({ ...f })).sort((a, b) => a.id.localeCompare(b.id)),
-    projects: [...source.projects].map((p) => ({ ...p })).sort((a, b) => a.id.localeCompare(b.id)),
-    monthSettings: Object.fromEntries(Object.entries(source.monthSettings).sort(([a], [b]) => a.localeCompare(b))),
-    recentCategories: [...source.recentCategories]
+    expenses: [...(source.expenses || [])].map((e) => ({ ...e })).sort((a, b) => a.id.localeCompare(b.id)),
+    incomes: [...(source.incomes || [])].map((e) => ({ ...e })).sort((a, b) => a.id.localeCompare(b.id)),
+    categories: [...(source.categories || [])].map((c) => ({ ...c })).sort((a, b) => a.id.localeCompare(b.id)),
+    incomeCategories: [...(source.incomeCategories || [])].map((c) => ({ ...c })).sort((a, b) => a.id.localeCompare(b.id)),
+    favorites: [...(source.favorites || [])].map((f) => ({ ...f })).sort((a, b) => a.id.localeCompare(b.id)),
+    projects: [...(source.projects || [])].map((p) => ({ ...p })).sort((a, b) => a.id.localeCompare(b.id)),
+    monthSettings: Object.fromEntries(Object.entries(source.monthSettings || {}).sort(([a], [b]) => a.localeCompare(b))),
+    recentCategories: [...(source.recentCategories || [])],
+    recentIncomeCategories: [...(source.recentIncomeCategories || [])]
+  };
+}
+
+function exportablePreviousState(source = state) {
+  return {
+    version: 5,
+    expenses: [...(source.expenses || [])].map((e) => ({ ...e })).sort((a, b) => a.id.localeCompare(b.id)),
+    categories: [...(source.categories || [])].map((c) => ({ ...c })).sort((a, b) => a.id.localeCompare(b.id)),
+    favorites: [...(source.favorites || [])].map((f) => ({ ...f })).sort((a, b) => a.id.localeCompare(b.id)),
+    projects: [...(source.projects || [])].map((p) => ({ ...p })).sort((a, b) => a.id.localeCompare(b.id)),
+    monthSettings: Object.fromEntries(Object.entries(source.monthSettings || {}).sort(([a], [b]) => a.localeCompare(b))),
+    recentCategories: [...(source.recentCategories || [])]
   };
 }
 
@@ -213,9 +268,13 @@ async function checksumState(source = state) {
 }
 
 function exportableLegacyState(source = state) {
-  const legacy = exportableState(source);
+  const legacy = exportablePreviousState(source);
   legacy.categories = legacy.categories.map(({ icon, color, ...category }) => category);
   return legacy;
+}
+
+async function checksumPreviousState(source = state) {
+  return sha256(stableStringify(exportablePreviousState(source)));
 }
 
 async function checksumLegacyState(source = state) {
@@ -251,6 +310,30 @@ function normalizeState(raw, { strict = true } = {}) {
     categoryNamesLower.add(key);
   }
   if (!categories.some((c) => c.name === 'Otros')) categories.push(categoryObject('Otros', categories.length));
+
+  let incomeCategories = Array.isArray(source.incomeCategories) ? source.incomeCategories : [];
+  if (incomeCategories.length && typeof incomeCategories[0] === 'string') incomeCategories = incomeCategories.map(incomeCategoryObject);
+  if (!incomeCategories.length) incomeCategories = DEFAULT_INCOME_CATEGORY_NAMES.map(incomeCategoryObject);
+  incomeCategories = incomeCategories.map((c, index) => {
+    const name = String(c?.name || `Ingreso ${index + 1}`).trim();
+    const preset = incomeCategoryPreset(name, index);
+    return {
+      id: String(c?.id || uid()),
+      name,
+      hidden: !!c?.hidden,
+      order: Number.isFinite(Number(c?.order)) ? Number(c.order) : index,
+      icon: String(c?.icon || preset.icon || '💰').slice(0, 8),
+      color: normalizeCategoryColor(c?.color, preset.color)
+    };
+  });
+  const incomeCategoryNamesLower = new Set();
+  for (const c of incomeCategories) {
+    if (!c.name) errors.push('Existe una categoría de ingreso sin nombre.');
+    const key = c.name.toLowerCase();
+    if (incomeCategoryNamesLower.has(key)) errors.push(`Categoría de ingreso duplicada: ${c.name}.`);
+    incomeCategoryNamesLower.add(key);
+  }
+  if (!incomeCategories.some((c) => c.name === 'Otros ingresos')) incomeCategories.push(incomeCategoryObject('Otros ingresos', incomeCategories.length));
 
   let projects = Array.isArray(source.projects) ? source.projects : [];
   if (!projects.length) projects = base.projects;
@@ -297,6 +380,34 @@ function normalizeState(raw, { strict = true } = {}) {
     ids.add(expense.id);
   }
 
+  const visibleIncomeCategoryNames = new Set(incomeCategories.map((c) => c.name));
+  let incomes = Array.isArray(source.incomes) ? source.incomes : [];
+  incomes = incomes.map((income, index) => {
+    const amount = Number(income?.amount);
+    const createdAt = String(income?.createdAt || localDateTime(income?.date || localDateKey(), '12:00'));
+    const date = String(income?.date || createdAt.slice(0, 10));
+    const item = {
+      id: String(income?.id || uid()),
+      amount,
+      category: visibleIncomeCategoryNames.has(income?.category) ? String(income.category) : 'Otros ingresos',
+      detail: String(income?.detail || ''),
+      projectId: projectIds.has(income?.projectId) ? String(income.projectId) : 'general',
+      date,
+      createdAt,
+      deletedAt: income?.deletedAt ? String(income.deletedAt) : null,
+      deletedReason: income?.deletedReason ? String(income.deletedReason) : ''
+    };
+    if (!Number.isFinite(amount) || amount <= 0) errors.push(`Monto inválido en ingreso ${index + 1}.`);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) errors.push(`Fecha inválida en ingreso ${index + 1}.`);
+    return item;
+  });
+
+  const incomeIds = new Set();
+  for (const income of incomes) {
+    if (incomeIds.has(income.id)) errors.push(`Identificador de ingreso duplicado: ${income.id}.`);
+    incomeIds.add(income.id);
+  }
+
   let favorites = Array.isArray(source.favorites) ? source.favorites : base.favorites;
   favorites = favorites.map((f) => ({
     id: String(f?.id || uid()),
@@ -330,6 +441,9 @@ function normalizeState(raw, { strict = true } = {}) {
   const recentCategories = Array.isArray(source.recentCategories)
     ? source.recentCategories.map(String).filter((name) => visibleCategoryNames.has(name)).slice(0, 4)
     : [];
+  const recentIncomeCategories = Array.isArray(source.recentIncomeCategories)
+    ? source.recentIncomeCategories.map(String).filter((name) => visibleIncomeCategoryNames.has(name)).slice(0, 4)
+    : [];
 
   if (strict && errors.length) return { ok: false, errors, warnings, data: null };
   if (!strict && errors.length) warnings.push(...errors.map((error) => `Corregido durante migración: ${error}`));
@@ -342,11 +456,14 @@ function normalizeState(raw, { strict = true } = {}) {
       version: APP_VERSION,
       revision: Number(source.revision) || 0,
       expenses: strict ? expenses : expenses.filter((e) => Number.isFinite(e.amount) && e.amount > 0 && /^\d{4}-\d{2}-\d{2}$/.test(e.date)),
+      incomes: strict ? incomes : incomes.filter((e) => Number.isFinite(e.amount) && e.amount > 0 && /^\d{4}-\d{2}-\d{2}$/.test(e.date)),
       categories,
+      incomeCategories,
       favorites: strict ? favorites : favorites.filter((f) => f.label && f.amount > 0),
       monthSettings,
       projects,
-      recentCategories
+      recentCategories,
+      recentIncomeCategories
     }
   };
 }
@@ -389,6 +506,13 @@ async function openDatabase() {
       if (!database.objectStoreNames.contains('favorites')) database.createObjectStore('favorites', { keyPath: 'id' });
       if (!database.objectStoreNames.contains('projects')) database.createObjectStore('projects', { keyPath: 'id' });
       if (!database.objectStoreNames.contains('monthSettings')) database.createObjectStore('monthSettings', { keyPath: 'month' });
+      if (!database.objectStoreNames.contains('incomes')) {
+        const store = database.createObjectStore('incomes', { keyPath: 'id' });
+        store.createIndex('date', 'date', { unique: false });
+        store.createIndex('projectId', 'projectId', { unique: false });
+        store.createIndex('deletedAt', 'deletedAt', { unique: false });
+      }
+      if (!database.objectStoreNames.contains('incomeCategories')) database.createObjectStore('incomeCategories', { keyPath: 'id' });
       if (!database.objectStoreNames.contains('meta')) database.createObjectStore('meta', { keyPath: 'key' });
       if (!database.objectStoreNames.contains('snapshots')) {
         const store = database.createObjectStore('snapshots', { keyPath: 'id' });
@@ -496,12 +620,14 @@ function handleSystemThemeChange() {
 
 async function readDatabaseBundle() {
   const tx = createTransaction([...DATA_STORES, 'meta']);
-  const [expenses, categories, favorites, projects, monthRows, metaRow, activationRow] = await Promise.all([
+  const [expenses, categories, favorites, projects, monthRows, incomes, incomeCategories, metaRow, activationRow] = await Promise.all([
     requestToPromise(tx.objectStore('expenses').getAll()),
     requestToPromise(tx.objectStore('categories').getAll()),
     requestToPromise(tx.objectStore('favorites').getAll()),
     requestToPromise(tx.objectStore('projects').getAll()),
     requestToPromise(tx.objectStore('monthSettings').getAll()),
+    requestToPromise(tx.objectStore('incomes').getAll()),
+    requestToPromise(tx.objectStore('incomeCategories').getAll()),
     requestToPromise(tx.objectStore('meta').get('appMeta')),
     requestToPromise(tx.objectStore('meta').get('activation'))
   ]);
@@ -511,11 +637,14 @@ async function readDatabaseBundle() {
       version: APP_VERSION,
       revision: Number(metaRow?.value?.revision) || 0,
       expenses,
+      incomes,
       categories,
+      incomeCategories,
       favorites,
       projects,
       monthSettings: Object.fromEntries(monthRows.map((row) => [row.month, { budget: row.budget, savingsGoal: row.savingsGoal }])),
-      recentCategories: Array.isArray(metaRow?.value?.recentCategories) ? metaRow.value.recentCategories : []
+      recentCategories: Array.isArray(metaRow?.value?.recentCategories) ? metaRow.value.recentCategories : [],
+      recentIncomeCategories: Array.isArray(metaRow?.value?.recentIncomeCategories) ? metaRow.value.recentIncomeCategories : []
     },
     meta: metaRow?.value || null,
     activation: activationRow?.value || null
@@ -551,7 +680,8 @@ async function createSnapshot(reason, source = state) {
     checksum,
     counts: {
       expenses: activeExpenses(source).length,
-      trash: trashedExpenses(source).length,
+      incomes: activeIncomes(source).length,
+      trash: trashedExpenses(source).length + trashedIncomes(source).length,
       categories: source.categories.length,
       projects: source.projects.length
     },
@@ -617,8 +747,8 @@ async function writeMirror(source, { allowEmpty = false } = {}) {
   const data = exportableState(source);
   const checksum = await checksumState(source);
   const currentEnvelope = readMirrorEnvelope(MIRROR_CURRENT_KEY);
-  const currentCount = Number(currentEnvelope?.counts?.totalExpenses) || 0;
-  if (!allowEmpty && currentCount > 0 && source.expenses.length === 0) {
+  const currentCount = (Number(currentEnvelope?.counts?.totalExpenses) || 0) + (Number(currentEnvelope?.counts?.totalIncomes) || 0);
+  if (!allowEmpty && currentCount > 0 && ((source.expenses || []).length + (source.incomes || []).length) === 0) {
     throw new DataSafetyError('Se bloqueó una copia vacía que intentaba reemplazar un respaldo con datos.');
   }
   const envelope = {
@@ -630,7 +760,9 @@ async function writeMirror(source, { allowEmpty = false } = {}) {
     counts: {
       totalExpenses: source.expenses.length,
       activeExpenses: activeExpenses(source).length,
-      trash: trashedExpenses(source).length
+      totalIncomes: (source.incomes || []).length,
+      activeIncomes: activeIncomes(source).length,
+      trash: trashedExpenses(source).length + trashedIncomes(source).length
     },
     data
   };
@@ -657,14 +789,18 @@ function buildAppMeta(source, checksum, currentMeta, revision) {
     updatedAt: new Date().toISOString(),
     totalExpenseCount: source.expenses.length,
     activeExpenseCount: activeExpenses(source).length,
-    trashCount: trashedExpenses(source).length,
+    totalIncomeCount: (source.incomes || []).length,
+    activeIncomeCount: activeIncomes(source).length,
+    trashCount: trashedExpenses(source).length + trashedIncomes(source).length,
     categoryCount: source.categories.length,
+    incomeCategoryCount: (source.incomeCategories || []).length,
     projectCount: source.projects.length,
     installId: currentMeta?.installId || uid(),
     migratedFromV4: !!currentMeta?.migratedFromV4,
     migrationAt: currentMeta?.migrationAt || null,
     lastExternalBackupAt: currentMeta?.lastExternalBackupAt || null,
-    recentCategories: [...source.recentCategories]
+    recentCategories: [...source.recentCategories],
+    recentIncomeCategories: [...(source.recentIncomeCategories || [])]
   };
 }
 
@@ -674,11 +810,15 @@ async function replaceDataInTransaction(tx, source) {
     categories: tx.objectStore('categories'),
     favorites: tx.objectStore('favorites'),
     projects: tx.objectStore('projects'),
-    monthSettings: tx.objectStore('monthSettings')
+    monthSettings: tx.objectStore('monthSettings'),
+    incomes: tx.objectStore('incomes'),
+    incomeCategories: tx.objectStore('incomeCategories')
   };
   for (const name of DATA_STORES) stores[name].clear();
   source.expenses.forEach((row) => stores.expenses.put(row));
+  (source.incomes || []).forEach((row) => stores.incomes.put(row));
   source.categories.forEach((row) => stores.categories.put(row));
+  (source.incomeCategories || []).forEach((row) => stores.incomeCategories.put(row));
   source.favorites.forEach((row) => stores.favorites.put(row));
   source.projects.forEach((row) => stores.projects.put(row));
   Object.entries(source.monthSettings).forEach(([month, config]) => stores.monthSettings.put({ month, budget: config.budget, savingsGoal: config.savingsGoal }));
@@ -703,7 +843,7 @@ async function forceWriteState(source, reason, metaOverrides = {}) {
     createdAt: new Date().toISOString(),
     action: reason,
     revision,
-    counts: { activeExpenses: activeExpenses(clean).length, totalExpenses: clean.expenses.length }
+    counts: { activeExpenses: activeExpenses(clean).length, totalExpenses: clean.expenses.length, activeIncomes: activeIncomes(clean).length, totalIncomes: clean.incomes.length }
   });
   await transactionDone(tx);
   state = clean;
@@ -734,7 +874,8 @@ async function commitDraft(draft, action, { allowEmpty = false, skipSnapshot = f
     tx.abort();
     throw new StaleRevisionError('Los datos cambiaron en otra ventana.');
   }
-  if (!allowEmpty && Number(currentMeta?.totalExpenseCount) > 0 && clean.expenses.length === 0) {
+  const previousTotalRows = (Number(currentMeta?.totalExpenseCount) || 0) + (Number(currentMeta?.totalIncomeCount) || 0);
+  if (!allowEmpty && previousTotalRows > 0 && (clean.expenses.length + clean.incomes.length) === 0) {
     tx.abort();
     throw new DataSafetyError('Se bloqueó un intento de reemplazar una base con datos por una base vacía.');
   }
@@ -749,7 +890,7 @@ async function commitDraft(draft, action, { allowEmpty = false, skipSnapshot = f
     createdAt: new Date().toISOString(),
     action,
     revision,
-    counts: { activeExpenses: activeExpenses(clean).length, totalExpenses: clean.expenses.length }
+    counts: { activeExpenses: activeExpenses(clean).length, totalExpenses: clean.expenses.length, activeIncomes: activeIncomes(clean).length, totalIncomes: clean.incomes.length }
   });
   await transactionDone(tx);
 
@@ -780,12 +921,18 @@ async function verifyLoadedBundle(bundle) {
   const normalized = normalizeState(bundle.rawState, { strict: true });
   if (!normalized.ok) return { status: 'invalid', reason: normalized.errors.join(' ') };
   const checksum = await checksumState(normalized.data);
-  const countsMatch =
+  const expenseCountsMatch =
     Number(bundle.meta.totalExpenseCount) === normalized.data.expenses.length &&
     Number(bundle.meta.activeExpenseCount) === activeExpenses(normalized.data).length;
-  if (!countsMatch) return { status: 'invalid', reason: 'La cantidad de registros no coincide con los metadatos.' };
+  const incomeCountsMatch = bundle.meta.totalIncomeCount == null || (
+    Number(bundle.meta.totalIncomeCount) === normalized.data.incomes.length &&
+    Number(bundle.meta.activeIncomeCount) === activeIncomes(normalized.data).length
+  );
+  if (!expenseCountsMatch || !incomeCountsMatch) return { status: 'invalid', reason: 'La cantidad de registros no coincide con los metadatos.' };
   normalized.data.revision = Number(bundle.meta.revision) || 0;
   if (checksum === bundle.meta.checksum) return { status: 'valid', data: normalized.data };
+  const previousChecksum = await checksumPreviousState(normalized.data);
+  if (Number(bundle.meta.schemaVersion) < APP_VERSION && previousChecksum === bundle.meta.checksum) return { status: 'visual-migration', data: normalized.data };
   const legacyChecksum = await checksumLegacyState(normalized.data);
   if (legacyChecksum === bundle.meta.checksum) return { status: 'visual-migration', data: normalized.data };
   return { status: 'invalid', reason: 'La suma de integridad no coincide.' };
@@ -847,7 +994,7 @@ async function initializeDataLayer() {
   }
 
   if (verification.status === 'visual-migration') {
-    $('bootMessage').textContent = 'Aplicando personalización segura a tus categorías…';
+    $('bootMessage').textContent = 'Aplicando balance de ingresos y personalización segura…';
     await forceWriteState(verification.data, 'initialize:migrate-b5-3-visuals', {
       visualMigrationAt: new Date().toISOString(),
       release: APP_RELEASE
@@ -896,9 +1043,9 @@ async function reloadFromDatabase({ notify = false } = {}) {
   const bundle = await readDatabaseBundle();
   const verification = await verifyLoadedBundle(bundle);
   if (verification.status === 'visual-migration') {
-    await forceWriteState(verification.data, 'reload:migrate-b5-3-visuals', { visualMigrationAt: new Date().toISOString(), release: APP_RELEASE });
+    await forceWriteState(verification.data, 'reload:migrate-b6-balance', { visualMigrationAt: new Date().toISOString(), release: APP_RELEASE });
     renderAll();
-    if (notify) showToast('Categorías actualizadas sin modificar tus gastos.');
+    if (notify) showToast('Datos actualizados a B6 sin modificar tus gastos.');
     return;
   }
   if (verification.status !== 'valid') {
@@ -1099,6 +1246,17 @@ function categoryCss(categoryOrName) {
   const category = typeof categoryOrName === 'string' ? categoryByName(categoryOrName) : categoryOrName;
   return `--category-color:${normalizeCategoryColor(category?.color)};`;
 }
+function visibleIncomeCategories(source = state) {
+  return (source.incomeCategories || []).filter((category) => !category.hidden).sort((a, b) => a.order - b.order);
+}
+function incomeCategoryNames(source = state) { return visibleIncomeCategories(source).map((category) => category.name); }
+function incomeCategoryByName(name, source = state) {
+  return source?.incomeCategories?.find((category) => category.name === name) || { name: name || 'Otros ingresos', icon: '💰', color: '#22C55E' };
+}
+function incomeCategoryCss(categoryOrName) {
+  const category = typeof categoryOrName === 'string' ? incomeCategoryByName(categoryOrName) : categoryOrName;
+  return `--category-color:${normalizeCategoryColor(category?.color, '#22C55E')};`;
+}
 function categoryBadge(categoryOrName, { compact = false } = {}) {
   const category = typeof categoryOrName === 'string' ? categoryByName(categoryOrName) : categoryOrName;
   return `<span class="category-badge${compact ? ' compact' : ''}" style="${categoryCss(category)}"><span class="category-icon" aria-hidden="true">${escapeHtml(category?.icon || '📌')}</span><span>${escapeHtml(category?.name || 'Otros')}</span></span>`;
@@ -1136,8 +1294,20 @@ function currentPeriodExpenses(period, source = state) {
     return expense.date.slice(0, 7) === currentMonth;
   });
 }
+function currentPeriodIncomes(period, source = state) {
+  const today = localDateKey();
+  const currentMonth = monthKey();
+  return activeIncomes(source).filter((income) => {
+    if (period === 'day') return income.date === today;
+    if (period === 'week') return inThisWeek(income.date);
+    return income.date.slice(0, 7) === currentMonth;
+  });
+}
 function registerRecentCategory(draft, name) {
   draft.recentCategories = [name, ...draft.recentCategories.filter((item) => item !== name)].slice(0, 4);
+}
+function registerRecentIncomeCategory(draft, name) {
+  draft.recentIncomeCategories = [name, ...draft.recentIncomeCategories.filter((item) => item !== name)].slice(0, 4);
 }
 
 async function addExpense(amountValue, category, detail = '', projectId = 'general', date = null, time = null) {
@@ -1173,6 +1343,38 @@ async function addExpense(amountValue, category, detail = '', projectId = 'gener
   return false;
 }
 
+async function addIncome(amountValue, category, detail = '', projectId = 'general', date = null, time = null) {
+  const amount = parseAmount(amountValue);
+  if (amount <= 0) {
+    showToast('Ingresa un monto de ingreso válido.');
+    return false;
+  }
+  const chosenCategory = category || incomeCategoryNames()[0] || 'Otros ingresos';
+  const now = new Date();
+  const incomeDate = date || localDateKey(now);
+  const incomeTime = time || localTimeKey(now);
+  const id = uid();
+  const result = await applyMutation('income:add', (draft) => {
+    draft.incomes.push({
+      id,
+      amount,
+      category: chosenCategory,
+      detail: detail.trim(),
+      projectId: projectId || 'general',
+      date: incomeDate,
+      createdAt: localDateTime(incomeDate, incomeTime),
+      deletedAt: null,
+      deletedReason: ''
+    });
+    registerRecentIncomeCategory(draft, chosenCategory);
+  });
+  if (result.ok) {
+    showToast('Ingreso guardado y verificado.');
+    return true;
+  }
+  return false;
+}
+
 async function undoLastExpense() {
   if (!lastAddedExpenseId) return;
   const id = lastAddedExpenseId;
@@ -1194,6 +1396,7 @@ function renderAll() {
   renderSelectors();
   renderTotals();
   renderActiveProject();
+  renderIncomeCategories();
   renderFavorites();
   renderRecent();
   renderSummary();
@@ -1222,6 +1425,11 @@ function renderSelectors() {
   setSelectOptions($('favoriteCategoryInput'), categories.map((name) => ({ value: name, label: name })), $('favoriteCategoryInput').value);
   setSelectOptions($('editExpenseCategory'), categories.map((name) => ({ value: name, label: name })), $('editExpenseCategory').value);
   setSelectOptions($('editExpenseProject'), projects, $('editExpenseProject').value);
+  const incomeCategories = incomeCategoryNames();
+  setSelectOptions($('incomeCategoryInput'), incomeCategories.map((name) => ({ value: name, label: name })), $('incomeCategoryInput').value || incomeCategories[0] || 'Otros ingresos');
+  setSelectOptions($('incomeProjectInput'), projects, activeProject().id);
+  setSelectOptions($('editIncomeCategory'), incomeCategories.map((name) => ({ value: name, label: name })), $('editIncomeCategory').value || incomeCategories[0] || 'Otros ingresos');
+  setSelectOptions($('editIncomeProject'), projects, $('editIncomeProject').value);
 }
 
 function renderTotals() {
@@ -1230,40 +1438,57 @@ function renderTotals() {
   const week = sum(currentPeriodExpenses('week'));
   const monthRows = currentPeriodExpenses('month');
   const monthSpent = sum(monthRows);
+  const monthIncome = sum(currentPeriodIncomes('month'));
+  const incomeToday = sum(currentPeriodIncomes('day'));
+  const incomeWeek = sum(currentPeriodIncomes('week'));
   const config = getMonthSetting();
-  const usable = Math.max(0, config.budget - config.savingsGoal);
+  const manualUsable = Math.max(0, config.budget - config.savingsGoal);
+  const autoUsable = Math.max(0, monthIncome - config.savingsGoal);
+  const usable = config.budget > 0 ? manualUsable : autoUsable;
+  const balance = monthIncome - monthSpent;
   const available = usable - monthSpent;
+  const realAvailable = balance - config.savingsGoal;
   const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
   const remainingDays = Math.max(1, daysInMonth - now.getDate() + 1);
-  const daily = available / remainingDays;
+  const daily = (config.budget > 0 ? available : realAvailable) / remainingDays;
   const percent = usable > 0 ? Math.min(100, (monthSpent / usable) * 100) : 0;
 
   $('todayTotal').textContent = money(today);
   $('weekTotal').textContent = money(week);
   $('monthTotal').textContent = money(monthSpent);
+  $('monthIncomeTotalMini').textContent = money(monthIncome);
   $('currentMonthName').textContent = monthLabel(monthKey());
-  $('availableMonth').textContent = money(available);
+  $('availableMonth').textContent = money(config.budget > 0 ? available : realAvailable);
   $('monthProgressBar').style.width = `${percent}%`;
+  $('balanceIncome').textContent = money(monthIncome);
+  $('balanceExpenses').textContent = money(monthSpent);
+  $('balanceNet').textContent = money(balance);
+  $('balanceReal').textContent = money(realAvailable);
+  $('balanceHint').textContent = config.budget > 0
+    ? `Modo presupuesto manual: ${money(config.budget)} · ingresos registrados ${money(monthIncome)}.`
+    : 'Modo automático: ingresos del mes menos ahorro y gastos.';
+  $('incomeTodayInfo').textContent = `Hoy: ${money(incomeToday)} · Semana: ${money(incomeWeek)}`;
 
-  if (config.budget <= 0) {
-    $('budgetStatus').textContent = 'Configura tu presupuesto mensual.';
+  if (config.budget <= 0 && monthIncome <= 0) {
+    $('budgetStatus').textContent = 'Configura tu presupuesto o registra tus ingresos del mes.';
     $('monthProgressBadge').textContent = 'Sin configurar';
     $('monthProgressBadge').className = 'badge';
     $('dailyAllowance').textContent = '—';
     $('monthDaysInfo').textContent = `Este mes tiene ${daysInMonth} días.`;
   } else {
-    $('budgetStatus').textContent = `Presupuesto utilizable: ${money(usable)} · Ahorro: ${money(config.savingsGoal)}`;
+    const baseText = config.budget > 0 ? `Presupuesto utilizable: ${money(manualUsable)}` : `Disponible por ingresos: ${money(autoUsable)}`;
+    $('budgetStatus').textContent = `${baseText} · Ahorro: ${money(config.savingsGoal)}`;
     $('dailyAllowance').textContent = money(Math.max(0, daily));
     $('monthDaysInfo').textContent = `Referencia para ${remainingDays} día${remainingDays === 1 ? '' : 's'} restante${remainingDays === 1 ? '' : 's'} de ${daysInMonth}.`;
     const badge = $('monthProgressBadge');
-    badge.textContent = `${Math.round(percent)}% usado`;
-    badge.className = `badge ${percent >= 100 ? 'danger' : percent >= 75 ? 'warning' : 'good'}`;
+    badge.textContent = usable > 0 ? `${Math.round(percent)}% usado` : 'Balance';
+    badge.className = `badge ${realAvailable < 0 || percent >= 100 ? 'danger' : percent >= 75 ? 'warning' : 'good'}`;
   }
-  $('paceMessage').textContent = config.budget <= 0
-    ? 'Configura tu presupuesto para ver el ritmo de gasto.'
-    : available < 0
-      ? `Has superado tu monto utilizable en ${money(Math.abs(available))}.`
-      : `Te quedan ${money(available)}. Para mantenerte dentro del presupuesto, la referencia es ${money(Math.max(0, daily))} por día.`;
+  $('paceMessage').textContent = config.budget <= 0 && monthIncome <= 0
+    ? 'Configura tu presupuesto o registra ingresos para ver el ritmo financiero.'
+    : realAvailable < 0
+      ? `Tus gastos y ahorro superan tus ingresos por ${money(Math.abs(realAvailable))}.`
+      : `Balance real después de ahorro: ${money(realAvailable)}. Referencia diaria: ${money(Math.max(0, daily))}.`;
 }
 
 function renderActiveProject() {
@@ -1372,10 +1597,27 @@ function renderSummary() {
       </div>`;
     }).join('')
     : '<p class="empty">No hay gastos en este periodo.</p>';
+  renderIncomeSummary(period);
+}
+
+function renderIncomeSummary(period) {
+  if (!$('incomeSummary')) return;
+  const rows = currentPeriodIncomes(period);
+  const totals = new Map();
+  rows.forEach((income) => totals.set(income.category, (totals.get(income.category) || 0) + Number(income.amount)));
+  const entries = [...totals.entries()].sort((a, b) => b[1] - a[1]);
+  const total = sum(rows);
+  $('incomeSummaryTotal').textContent = `Total ingresos: ${money(total)}`;
+  $('incomeSummary').innerHTML = entries.length
+    ? entries.map(([name, value]) => {
+      const category = incomeCategoryByName(name);
+      return `<div class="summary-category income-summary-row" style="${incomeCategoryCss(category)}"><div class="bar-info"><span><span class="category-icon" aria-hidden="true">${escapeHtml(category.icon)}</span>${escapeHtml(name)}</span><strong>${money(value)}</strong></div><div class="bar-bg"><div class="bar-fill income-fill" style="width:${total ? (value / total) * 100 : 0}%"></div></div></div>`;
+    }).join('')
+    : '<p class="empty">No hay ingresos en este periodo.</p>';
 }
 
 function historyMonths() {
-  return [...new Set(activeExpenses().map((expense) => expense.date.slice(0, 7)))].sort().reverse();
+  return [...new Set([...activeExpenses().map((expense) => expense.date.slice(0, 7)), ...activeIncomes().map((income) => income.date.slice(0, 7))])].sort().reverse();
 }
 
 function renderHistoryOptions() {
@@ -1387,28 +1629,38 @@ function renderHistoryOptions() {
 function renderHistory() {
   const query = $('searchInput').value.trim().toLowerCase();
   const monthFilter = $('historyMonthFilter').value || 'all';
-  const rows = activeExpenses()
-    .filter((expense) => (monthFilter === 'all' || expense.date.startsWith(monthFilter)) && (!query || `${expense.category} ${expense.detail} ${projectById(expense.projectId)?.name}`.toLowerCase().includes(query)))
+  const typeFilter = $('historyTypeFilter')?.value || 'all';
+  const expenseRows = activeExpenses().filter(() => typeFilter !== 'incomes').map((expense) => ({ type: 'expense', row: expense, createdAt: expense.createdAt || `${expense.date}T12:00:00` }));
+  const incomeRows = activeIncomes().filter(() => typeFilter !== 'expenses').map((income) => ({ type: 'income', row: income, createdAt: income.createdAt || `${income.date}T12:00:00` }));
+  const rows = [...expenseRows, ...incomeRows]
+    .filter((entry) => {
+      const item = entry.row;
+      if (monthFilter !== 'all' && !String(item.date || '').startsWith(monthFilter)) return false;
+      const project = projectById(item.projectId)?.name || 'General';
+      const searchable = `${entry.type} ${item.category} ${item.detail} ${project}`.toLowerCase();
+      return !query || searchable.includes(query);
+    })
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 
   $('historyList').innerHTML = rows.length
-    ? rows.map((expense) => {
-      const date = new Date(expense.createdAt);
+    ? rows.map((entry) => {
+      const item = entry.row;
+      const date = new Date(item.createdAt);
       const time = Number.isNaN(date.getTime()) ? '' : date.toLocaleTimeString('es-BO', { hour: '2-digit', minute: '2-digit' });
-      const category = categoryByName(expense.category);
-      return `<article class="item expense-item" style="${categoryCss(category)}">
-        <div class="expense-main"><span class="history-category-icon category-icon" aria-hidden="true">${escapeHtml(category.icon)}</span><div><strong>${escapeHtml(expense.detail || expense.category)}</strong><small>${escapeHtml(expense.category)} · ${expense.date} ${time} · ${escapeHtml(projectById(expense.projectId)?.name || 'General')}</small></div></div>
-        <div class="amount-block"><strong>${money(expense.amount)}</strong><div class="item-actions"><button class="mini-btn" data-edit-expense="${expense.id}" type="button">Editar</button><button class="mini-btn delete" data-delete-expense="${expense.id}" type="button">Papelera</button></div></div>
+      const isIncome = entry.type === 'income';
+      const category = isIncome ? incomeCategoryByName(item.category) : categoryByName(item.category);
+      const amountText = `${isIncome ? '+' : '-'} ${money(item.amount)}`;
+      return `<article class="item expense-item ${isIncome ? 'income-item' : ''}" style="${isIncome ? incomeCategoryCss(category) : categoryCss(category)}">
+        <div class="expense-main"><span class="history-category-icon category-icon" aria-hidden="true">${escapeHtml(category.icon)}</span><div><strong>${escapeHtml(item.detail || item.category)}</strong><small>${isIncome ? 'Ingreso' : 'Gasto'} · ${escapeHtml(item.category)} · ${item.date} ${time} · ${escapeHtml(projectById(item.projectId)?.name || 'General')}</small></div></div>
+        <div class="amount-block"><strong class="${isIncome ? 'income-amount' : ''}">${amountText}</strong><div class="item-actions"><button class="mini-btn" data-edit-${entry.type}="${item.id}" type="button">Editar</button><button class="mini-btn delete" data-delete-${entry.type}="${item.id}" type="button">Papelera</button></div></div>
       </article>`;
     }).join('')
-    : '<p class="empty">No hay gastos para mostrar.</p>';
+    : '<p class="empty">No hay movimientos para mostrar.</p>';
 
-  $('historyList').querySelectorAll('[data-edit-expense]').forEach((button) => {
-    button.onclick = () => openExpenseEditor(button.dataset.editExpense);
-  });
-  $('historyList').querySelectorAll('[data-delete-expense]').forEach((button) => {
-    button.onclick = () => moveExpenseToTrash(button.dataset.deleteExpense);
-  });
+  $('historyList').querySelectorAll('[data-edit-expense]').forEach((button) => { button.onclick = () => openExpenseEditor(button.dataset.editExpense); });
+  $('historyList').querySelectorAll('[data-delete-expense]').forEach((button) => { button.onclick = () => moveExpenseToTrash(button.dataset.deleteExpense); });
+  $('historyList').querySelectorAll('[data-edit-income]').forEach((button) => { button.onclick = () => openIncomeEditor(button.dataset.editIncome); });
+  $('historyList').querySelectorAll('[data-delete-income]').forEach((button) => { button.onclick = () => moveIncomeToTrash(button.dataset.deleteIncome); });
 }
 
 function openExpenseEditor(id) {
@@ -1425,6 +1677,32 @@ function openExpenseEditor(id) {
   openModal('expenseEditorModal');
 }
 
+function openIncomeEditor(id) {
+  const income = activeIncomes().find((item) => item.id === id);
+  if (!income) return;
+  editingIncomeId = id;
+  renderSelectors();
+  $('editIncomeAmount').value = inputAmount(income.amount);
+  $('editIncomeCategory').value = income.category;
+  $('editIncomeDetail').value = income.detail;
+  $('editIncomeProject').value = income.projectId;
+  $('editIncomeDate').value = income.date;
+  $('editIncomeTime').value = income.createdAt.slice(11, 16);
+  openModal('incomeEditorModal');
+}
+
+async function moveIncomeToTrash(id) {
+  const income = activeIncomes().find((item) => item.id === id);
+  if (!income || !confirm(`¿Mover el ingreso “${income.detail || income.category}” a la papelera?`)) return;
+  const result = await applyMutation('income:trash', (draft) => {
+    const item = draft.incomes.find((row) => row.id === id);
+    if (!item) return false;
+    item.deletedAt = new Date().toISOString();
+    item.deletedReason = 'Eliminado por el usuario';
+  });
+  if (result.ok) showToast('Ingreso movido a la papelera.');
+}
+
 async function moveExpenseToTrash(id) {
   const expense = activeExpenses().find((item) => item.id === id);
   if (!expense || !confirm(`¿Mover “${expense.detail || expense.category}” a la papelera?`)) return;
@@ -1438,23 +1716,25 @@ async function moveExpenseToTrash(id) {
 }
 
 function renderTrash() {
-  const rows = trashedExpenses().sort((a, b) => String(b.deletedAt).localeCompare(String(a.deletedAt)));
+  const expenseRows = trashedExpenses().map((row) => ({ type: 'expense', row }));
+  const incomeRows = trashedIncomes().map((row) => ({ type: 'income', row }));
+  const rows = [...expenseRows, ...incomeRows].sort((a, b) => String(b.row.deletedAt).localeCompare(String(a.row.deletedAt)));
   $('trashList').innerHTML = rows.length
-    ? rows.map((expense) => {
-      const category = categoryByName(expense.category);
-      return `<article class="item expense-item" style="${categoryCss(category)}">
-      <div class="expense-main"><span class="history-category-icon category-icon" aria-hidden="true">${escapeHtml(category.icon)}</span><div><strong>${escapeHtml(expense.detail || expense.category)}</strong><small>${escapeHtml(expense.category)} · ${expense.date} · ${money(expense.amount)}</small><span class="trash-tag">Eliminado ${formatDateTime(expense.deletedAt)}</span></div></div>
-      <div class="item-actions"><button class="mini-btn" data-restore-expense="${expense.id}" type="button">Restaurar</button><button class="mini-btn delete" data-permanent-delete="${expense.id}" type="button">Eliminar definitivamente</button></div>
+    ? rows.map((entry) => {
+      const item = entry.row;
+      const isIncome = entry.type === 'income';
+      const category = isIncome ? incomeCategoryByName(item.category) : categoryByName(item.category);
+      return `<article class="item expense-item ${isIncome ? 'income-item' : ''}" style="${isIncome ? incomeCategoryCss(category) : categoryCss(category)}">
+      <div class="expense-main"><span class="history-category-icon category-icon" aria-hidden="true">${escapeHtml(category.icon)}</span><div><strong>${escapeHtml(item.detail || item.category)}</strong><small>${isIncome ? 'Ingreso' : 'Gasto'} · ${escapeHtml(item.category)} · ${item.date} · ${money(item.amount)}</small><span class="trash-tag">Eliminado ${formatDateTime(item.deletedAt)}</span></div></div>
+      <div class="item-actions"><button class="mini-btn" data-restore-${entry.type}="${item.id}" type="button">Restaurar</button><button class="mini-btn delete" data-permanent-delete-${entry.type}="${item.id}" type="button">Eliminar definitivamente</button></div>
     </article>`;
     }).join('')
     : '<p class="empty">La papelera está vacía.</p>';
 
-  $('trashList').querySelectorAll('[data-restore-expense]').forEach((button) => {
-    button.onclick = () => restoreExpense(button.dataset.restoreExpense);
-  });
-  $('trashList').querySelectorAll('[data-permanent-delete]').forEach((button) => {
-    button.onclick = () => permanentlyDeleteExpense(button.dataset.permanentDelete);
-  });
+  $('trashList').querySelectorAll('[data-restore-expense]').forEach((button) => { button.onclick = () => restoreExpense(button.dataset.restoreExpense); });
+  $('trashList').querySelectorAll('[data-permanent-delete-expense]').forEach((button) => { button.onclick = () => permanentlyDeleteExpense(button.dataset.permanentDeleteExpense); });
+  $('trashList').querySelectorAll('[data-restore-income]').forEach((button) => { button.onclick = () => restoreIncome(button.dataset.restoreIncome); });
+  $('trashList').querySelectorAll('[data-permanent-delete-income]').forEach((button) => { button.onclick = () => permanentlyDeleteIncome(button.dataset.permanentDeleteIncome); });
 }
 
 async function restoreExpense(id) {
@@ -1467,19 +1747,30 @@ async function restoreExpense(id) {
   if (result.ok) showToast('Gasto restaurado.');
 }
 
+async function restoreIncome(id) {
+  const result = await applyMutation('income:restore', (draft) => {
+    const item = draft.incomes.find((row) => row.id === id);
+    if (!item) return false;
+    item.deletedAt = null;
+    item.deletedReason = '';
+  });
+  if (result.ok) showToast('Ingreso restaurado.');
+}
+
 async function permanentlyDeleteExpense(id) {
   const expense = trashedExpenses().find((item) => item.id === id);
   if (!expense || !confirm('Esta acción eliminará definitivamente el gasto. ¿Continuar?')) return;
-  try {
-    await createSnapshot('before:permanent-delete', state);
-  } catch (error) {
-    showToast('No se pudo crear la copia previa. La eliminación fue cancelada.');
-    return;
-  }
-  const result = await applyMutation('expense:permanent-delete', (draft) => {
-    draft.expenses = draft.expenses.filter((row) => row.id !== id);
-  }, { allowEmpty: true });
+  try { await createSnapshot('before:permanent-delete-expense', state); } catch (error) { showToast('No se pudo crear la copia previa. La eliminación fue cancelada.'); return; }
+  const result = await applyMutation('expense:permanent-delete', (draft) => { draft.expenses = draft.expenses.filter((row) => row.id !== id); }, { allowEmpty: true });
   if (result.ok) showToast('Gasto eliminado definitivamente.');
+}
+
+async function permanentlyDeleteIncome(id) {
+  const income = trashedIncomes().find((item) => item.id === id);
+  if (!income || !confirm('Esta acción eliminará definitivamente el ingreso. ¿Continuar?')) return;
+  try { await createSnapshot('before:permanent-delete-income', state); } catch (error) { showToast('No se pudo crear la copia previa. La eliminación fue cancelada.'); return; }
+  const result = await applyMutation('income:permanent-delete', (draft) => { draft.incomes = draft.incomes.filter((row) => row.id !== id); }, { allowEmpty: true });
+  if (result.ok) showToast('Ingreso eliminado definitivamente.');
 }
 
 function renderProjects() {
@@ -1487,8 +1778,9 @@ function renderProjects() {
   $('projectList').innerHTML = rows.length
     ? rows.map((project) => {
       const spent = sum(activeExpenses().filter((expense) => expense.projectId === project.id));
+      const received = sum(activeIncomes().filter((income) => income.projectId === project.id));
       return `<article class="item">
-        <div><strong>${escapeHtml(project.name)} ${project.active ? '· Activo' : ''}</strong><small>Presupuesto ${money(project.budget)} · Gastado ${money(spent)} · Disponible ${money(Number(project.budget || 0) - spent)}</small></div>
+        <div><strong>${escapeHtml(project.name)} ${project.active ? '· Activo' : ''}</strong><small>Presupuesto ${money(project.budget)} · Ingresos ${money(received)} · Gastos ${money(spent)} · Balance ${money(received - spent)}</small></div>
         <div class="project-actions">${project.active ? '' : `<button class="mini-btn" data-activate-project="${project.id}" type="button">Activar</button>`}<button class="mini-btn" data-edit-project="${project.id}" type="button">Editar</button></div>
       </article>`;
     }).join('')
@@ -1657,6 +1949,91 @@ function renderCategoryPicker() {
   });
 }
 
+function renderIncomeCategories() {
+  if (!$('incomeCategoriesList')) return;
+  const rows = [...(state.incomeCategories || [])].sort((a, b) => a.order - b.order);
+  $('incomeCategoriesList').innerHTML = rows.map((category, index) => `<div class="category-item ${category.hidden ? 'is-hidden' : ''}" style="${incomeCategoryCss(category)}">
+    <div class="category-row-main"><span class="category-list-icon category-icon" aria-hidden="true">${escapeHtml(category.icon || '💰')}</span><span>${escapeHtml(category.name)}${category.hidden ? ' · Oculta' : ''}</span></div>
+    <div class="category-actions">
+      <button class="mini-btn" data-up-income-category="${category.id}" type="button" ${index === 0 ? 'disabled' : ''}>↑</button>
+      <button class="mini-btn" data-down-income-category="${category.id}" type="button" ${index === rows.length - 1 ? 'disabled' : ''}>↓</button>
+      <button class="mini-btn" data-edit-income-category="${category.id}" type="button">Personalizar</button>
+      <button class="mini-btn" data-toggle-income-category="${category.id}" type="button" ${category.name === 'Otros ingresos' ? 'disabled' : ''}>${category.hidden ? 'Mostrar' : 'Ocultar'}</button>
+    </div>
+  </div>`).join('');
+  $('incomeCategoriesList').querySelectorAll('[data-up-income-category]').forEach((button) => { button.onclick = () => moveIncomeCategory(button.dataset.upIncomeCategory, -1); });
+  $('incomeCategoriesList').querySelectorAll('[data-down-income-category]').forEach((button) => { button.onclick = () => moveIncomeCategory(button.dataset.downIncomeCategory, 1); });
+  $('incomeCategoriesList').querySelectorAll('[data-edit-income-category]').forEach((button) => { button.onclick = () => openIncomeCategoryEditor(button.dataset.editIncomeCategory); });
+  $('incomeCategoriesList').querySelectorAll('[data-toggle-income-category]').forEach((button) => { button.onclick = () => toggleIncomeCategory(button.dataset.toggleIncomeCategory); });
+}
+
+async function moveIncomeCategory(id, delta) {
+  const result = await applyMutation('income-category:move', (draft) => {
+    const rows = [...draft.incomeCategories].sort((a, b) => a.order - b.order);
+    const index = rows.findIndex((category) => category.id === id);
+    const target = index + delta;
+    if (index < 0 || target < 0 || target >= rows.length) return false;
+    [rows[index].order, rows[target].order] = [rows[target].order, rows[index].order];
+  });
+  if (result.ok) showToast('Orden de ingresos actualizado.');
+}
+
+function renderIncomeCategoryEditorChoices() {
+  $('incomeCategoryIconOptions').innerHTML = INCOME_ICONS.map((icon) => `<button class="icon-option ${icon === draftIncomeCategoryIcon ? 'selected' : ''}" data-income-category-icon="${escapeHtml(icon)}" type="button">${escapeHtml(icon)}</button>`).join('');
+  $('incomeCategoryColorOptions').innerHTML = CATEGORY_PALETTE.map((color) => `<button class="color-option ${color.value === draftIncomeCategoryColor ? 'selected' : ''}" data-income-category-color="${color.value}" type="button" title="${escapeHtml(color.label)}"><span style="background:${color.value}"></span></button>`).join('');
+  $('incomeCategoryIconOptions').querySelectorAll('[data-income-category-icon]').forEach((button) => {
+    button.onclick = () => { draftIncomeCategoryIcon = button.dataset.incomeCategoryIcon; renderIncomeCategoryEditorChoices(); updateIncomeCategoryEditorPreview(); };
+  });
+  $('incomeCategoryColorOptions').querySelectorAll('[data-income-category-color]').forEach((button) => {
+    button.onclick = () => { draftIncomeCategoryColor = normalizeCategoryColor(button.dataset.incomeCategoryColor, '#22C55E'); renderIncomeCategoryEditorChoices(); updateIncomeCategoryEditorPreview(); };
+  });
+}
+function updateIncomeCategoryEditorPreview() {
+  const name = $('editIncomeCategoryName').value.trim() || 'Ingreso';
+  $('incomeCategoryEditorPreview').innerHTML = `<span class="category-badge preview" style="--category-color:${draftIncomeCategoryColor}"><span class="category-icon" aria-hidden="true">${escapeHtml(draftIncomeCategoryIcon)}</span><span>${escapeHtml(name)}</span></span>`;
+}
+function openIncomeCategoryEditor(id) {
+  const category = state.incomeCategories.find((item) => item.id === id);
+  if (!category) return;
+  editingIncomeCategoryId = id;
+  draftIncomeCategoryIcon = category.icon || incomeCategoryPreset(category.name, category.order).icon;
+  draftIncomeCategoryColor = normalizeCategoryColor(category.color, incomeCategoryPreset(category.name, category.order).color);
+  $('editIncomeCategoryName').value = category.name;
+  renderIncomeCategoryEditorChoices();
+  updateIncomeCategoryEditorPreview();
+  closeModal('incomeCategoriesModal');
+  openModal('incomeCategoryEditorModal');
+}
+async function saveIncomeCategoryEditor() {
+  const category = state.incomeCategories.find((item) => item.id === editingIncomeCategoryId);
+  if (!category) return;
+  const name = $('editIncomeCategoryName').value.trim();
+  if (!name) { showToast('Escribe un nombre para la categoría de ingreso.'); return; }
+  if (state.incomeCategories.some((item) => item.id !== editingIncomeCategoryId && item.name.toLowerCase() === name.toLowerCase())) { showToast('Esa categoría de ingreso ya existe.'); return; }
+  const oldName = category.name;
+  const result = await applyMutation('income-category:customize', (draft) => {
+    const item = draft.incomeCategories.find((row) => row.id === editingIncomeCategoryId);
+    if (!item) return false;
+    item.name = name;
+    item.icon = draftIncomeCategoryIcon || '💰';
+    item.color = normalizeCategoryColor(draftIncomeCategoryColor, '#22C55E');
+    if (name !== oldName) {
+      draft.incomes.forEach((income) => { if (income.category === oldName) income.category = name; });
+      draft.recentIncomeCategories = draft.recentIncomeCategories.map((recent) => recent === oldName ? name : recent);
+    }
+  });
+  if (result.ok) { closeModal('incomeCategoryEditorModal'); openModal('incomeCategoriesModal'); showToast('Categoría de ingreso personalizada.'); }
+}
+async function toggleIncomeCategory(id) {
+  const category = state.incomeCategories.find((item) => item.id === id);
+  if (!category || category.name === 'Otros ingresos') return;
+  const result = await applyMutation('income-category:visibility', (draft) => {
+    const item = draft.incomeCategories.find((row) => row.id === id);
+    item.hidden = !item.hidden;
+  });
+  if (result.ok) showToast(category.hidden ? 'Categoría de ingreso visible.' : 'Categoría de ingreso ocultada.');
+}
+
 function loadSettingsMonth() {
   const key = $('settingsMonthInput').value || monthKey();
   const config = getMonthSetting(key);
@@ -1679,7 +2056,8 @@ function renderDiagnostics() {
     ['Almacenamiento', persistentStorageGranted ? 'Persistente' : 'Estándar', persistentStorageGranted ? 'status-ok' : 'status-warn'],
     ['Último guardado', formatDateTime(appMeta.updatedAt), ''],
     ['Gastos activos', String(appMeta.activeExpenseCount ?? activeExpenses().length), ''],
-    ['Papelera', String(appMeta.trashCount ?? trashedExpenses().length), ''],
+    ['Ingresos activos', String(appMeta.activeIncomeCount ?? activeIncomes().length), ''],
+    ['Papelera', String(appMeta.trashCount ?? (trashedExpenses().length + trashedIncomes().length)), ''],
     ['Revisión', String(appMeta.revision ?? state.revision), ''],
     ['Copia interna', snapshotDate, latestSnapshotMeta ? 'status-ok' : 'status-warn'],
     ['Copia secundaria', mirrorText, mirrorStatus.current ? 'status-ok' : 'status-warn'],
@@ -1757,6 +2135,32 @@ function getExpenseTime(expense) {
   return createdAt.match(/T(\d{2}:\d{2})/)?.[1] || '';
 }
 
+function normalizedExportIncome(income, index) {
+  const amount = parseAmount(income?.amount ?? income?.monto ?? income?.value ?? income?.price);
+  const category = String(income?.category ?? income?.categoryName ?? income?.tipo ?? '').trim();
+  const detail = String(income?.detail ?? income?.description ?? income?.detalle ?? '').trim();
+  const date = String(income?.date ?? income?.fecha ?? String(income?.createdAt || '').slice(0, 10)).trim();
+  const projectName = String(
+    projectById(income?.projectId)?.name
+      || income?.projectName
+      || (income?.projectId === 'general' ? 'Gastos generales' : '')
+      || 'Gastos generales'
+  ).trim();
+  return {
+    number: index + 1,
+    type: 'Ingreso',
+    date,
+    time: getExpenseTime(income),
+    category: category || 'Sin categoría',
+    detail: detail || 'Sin detalle',
+    amount,
+    signedAmount: amount,
+    signedAmount: -amount,
+    project: projectName,
+    month: date.slice(0, 7)
+  };
+}
+
 function normalizedExportExpense(expense, index) {
   const amount = parseAmount(expense?.amount ?? expense?.monto ?? expense?.value ?? expense?.price);
   const category = String(expense?.category ?? expense?.categoryName ?? expense?.tipo ?? '').trim();
@@ -1770,6 +2174,7 @@ function normalizedExportExpense(expense, index) {
   ).trim();
   return {
     number: index + 1,
+    type: 'Gasto',
     date,
     time: getExpenseTime(expense),
     category: category || 'Sin categoría',
@@ -1782,20 +2187,25 @@ function normalizedExportExpense(expense, index) {
 
 function exportRowsFromCurrentFilters() {
   const monthFilter = $('historyMonthFilter').value || 'all';
+  const typeFilter = $('historyTypeFilter')?.value || 'all';
   const query = $('searchInput').value.trim().toLowerCase();
-  const rows = activeExpenses()
-    .filter((expense) => {
-      if (monthFilter !== 'all' && !String(expense.date || '').startsWith(monthFilter)) return false;
-      const searchable = `${expense.category || ''} ${expense.detail || ''} ${projectById(expense.projectId)?.name || ''}`.toLowerCase();
+  const movementRows = [];
+  if (typeFilter !== 'incomes') activeExpenses().forEach((expense) => movementRows.push({ type: 'expense', row: expense, createdAt: expense.createdAt || `${expense.date}T12:00:00` }));
+  if (typeFilter !== 'expenses') activeIncomes().forEach((income) => movementRows.push({ type: 'income', row: income, createdAt: income.createdAt || `${income.date}T12:00:00` }));
+  const rows = movementRows
+    .filter((entry) => {
+      const item = entry.row;
+      if (monthFilter !== 'all' && !String(item.date || '').startsWith(monthFilter)) return false;
+      const searchable = `${entry.type} ${item.category || ''} ${item.detail || ''} ${projectById(item.projectId)?.name || ''}`.toLowerCase();
       return !query || searchable.includes(query);
     })
     .sort((a, b) => String(a.createdAt || '').localeCompare(String(b.createdAt || '')))
-    .map(normalizedExportExpense);
+    .map((entry, index) => entry.type === 'income' ? normalizedExportIncome(entry.row, index) : normalizedExportExpense(entry.row, index));
   return { monthFilter, query, rows };
 }
 
 function validateExportRows(rows) {
-  if (!rows.length) throw new DataSafetyError('No hay gastos para exportar con los filtros actuales.');
+  if (!rows.length) throw new DataSafetyError('No hay movimientos para exportar con los filtros actuales.');
   const invalidAmounts = rows.filter((row) => !Number.isFinite(row.amount) || row.amount <= 0);
   const invalidDates = rows.filter((row) => !/^\d{4}-\d{2}-\d{2}$/.test(row.date));
   if (invalidAmounts.length || invalidDates.length) {
@@ -1900,26 +2310,28 @@ function numericCell(reference, value, style = 0) {
 
 function buildExpenseWorkbook(rows, periodLabel) {
   validateExportRows(rows);
-  const total = rows.reduce((sumValue, row) => sumValue + row.amount, 0);
+  const total = rows.reduce((sumValue, row) => sumValue + row.signedAmount, 0);
   const exportedAt = new Date();
-  const headers = ['N.º', 'Fecha', 'Hora', 'Categoría', 'Detalle', 'Monto (Bs)', 'Proyecto', 'Mes'];
+  const headers = ['N.º', 'Tipo', 'Fecha', 'Hora', 'Categoría', 'Detalle', 'Monto (Bs)', 'Balance +/-', 'Proyecto', 'Mes'];
   const dataStartRow = 6;
   const dataRows = rows.map((row, rowIndex) => {
     const excelRow = dataStartRow + rowIndex;
     const values = [
       row.number,
+      row.type,
       formatExportDate(row.date),
       row.time,
       row.category,
       row.detail,
       row.amount,
+      row.signedAmount,
       row.project,
       row.month
     ];
     const cells = values.map((value, columnIndex) => {
       const ref = `${excelColumnName(columnIndex + 1)}${excelRow}`;
       if (columnIndex === 0) return numericCell(ref, value, 0);
-      if (columnIndex === 5) return numericCell(ref, value, 2);
+      if (columnIndex === 6 || columnIndex === 7) return numericCell(ref, value, 2);
       return inlineStringCell(ref, value, 0);
     }).join('');
     return `<row r="${excelRow}">${cells}</row>`;
@@ -1930,15 +2342,15 @@ function buildExpenseWorkbook(rows, periodLabel) {
   const sheetXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
   <sheetViews><sheetView workbookViewId="0"><pane ySplit="5" topLeftCell="A6" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>
-  <cols><col min="1" max="1" width="7" customWidth="1"/><col min="2" max="2" width="13" customWidth="1"/><col min="3" max="3" width="10" customWidth="1"/><col min="4" max="4" width="25" customWidth="1"/><col min="5" max="5" width="36" customWidth="1"/><col min="6" max="6" width="15" customWidth="1"/><col min="7" max="7" width="27" customWidth="1"/><col min="8" max="8" width="12" customWidth="1"/></cols>
+  <cols><col min="1" max="1" width="7" customWidth="1"/><col min="2" max="2" width="12" customWidth="1"/><col min="3" max="3" width="13" customWidth="1"/><col min="4" max="4" width="10" customWidth="1"/><col min="5" max="5" width="25" customWidth="1"/><col min="6" max="6" width="36" customWidth="1"/><col min="7" max="8" width="15" customWidth="1"/><col min="9" max="9" width="27" customWidth="1"/><col min="10" max="10" width="12" customWidth="1"/></cols>
   <sheetData>
-    <row r="1" ht="24" customHeight="1">${inlineStringCell('A1', 'Control de Presupuesto — Gastos exportados', 3)}</row>
+    <row r="1" ht="24" customHeight="1">${inlineStringCell('A1', 'Control de Presupuesto — Movimientos exportados', 3)}</row>
     <row r="2">${inlineStringCell('A2', 'Periodo', 4)}${inlineStringCell('B2', periodLabel, 0)}${inlineStringCell('D2', 'Fecha de exportación', 4)}${inlineStringCell('E2', exportedAt.toLocaleString('es-BO'), 0)}</row>
-    <row r="3">${inlineStringCell('A3', 'Registros', 4)}${numericCell('B3', rows.length, 0)}${inlineStringCell('D3', 'Total gastado (Bs)', 4)}${numericCell('E3', total, 2)}</row>
+    <row r="3">${inlineStringCell('A3', 'Registros', 4)}${numericCell('B3', rows.length, 0)}${inlineStringCell('D3', 'Total neto (Bs)', 4)}${numericCell('E3', rows.reduce((value, row) => value + row.signedAmount, 0), 2)}</row>
     <row r="5" ht="22" customHeight="1">${headerCells}</row>
     ${dataRows}
   </sheetData>
-  <mergeCells count="1"><mergeCell ref="A1:H1"/></mergeCells>
+  <mergeCells count="1"><mergeCell ref="A1:J1"/></mergeCells>
   <pageMargins left="0.4" right="0.4" top="0.6" bottom="0.6" header="0.2" footer="0.2"/>
 </worksheet>`;
 
@@ -1953,13 +2365,13 @@ function buildExpenseWorkbook(rows, periodLabel) {
   <cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>
 </styleSheet>`;
 
-  const workbookXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><bookViews><workbookView/></bookViews><sheets><sheet name="Gastos" sheetId="1" r:id="rId1"/></sheets></workbook>`;
+  const workbookXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><bookViews><workbookView/></bookViews><sheets><sheet name="Movimientos" sheetId="1" r:id="rId1"/></sheets></workbook>`;
   const workbookRels = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>`;
   const rootRels = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="docProps/core.xml"/><Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties" Target="docProps/app.xml"/></Relationships>`;
   const contentTypes = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/><Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/><Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/></Types>`;
   const nowIso = exportedAt.toISOString();
-  const coreXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"><dc:title>Control de Presupuesto</dc:title><dc:creator>Control de Presupuesto B5.3</dc:creator><cp:lastModifiedBy>Control de Presupuesto B5.3</cp:lastModifiedBy><dcterms:created xsi:type="dcterms:W3CDTF">${nowIso}</dcterms:created><dcterms:modified xsi:type="dcterms:W3CDTF">${nowIso}</dcterms:modified></cp:coreProperties>`;
-  const appXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties" xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes"><Application>Control de Presupuesto B5.3</Application><DocSecurity>0</DocSecurity><AppVersion>5.3</AppVersion></Properties>`;
+  const coreXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"><dc:title>Control de Presupuesto</dc:title><dc:creator>Control de Presupuesto B6</dc:creator><cp:lastModifiedBy>Control de Presupuesto B6</cp:lastModifiedBy><dcterms:created xsi:type="dcterms:W3CDTF">${nowIso}</dcterms:created><dcterms:modified xsi:type="dcterms:W3CDTF">${nowIso}</dcterms:modified></cp:coreProperties>`;
+  const appXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties" xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes"><Application>Control de Presupuesto B6</Application><DocSecurity>0</DocSecurity><AppVersion>6.0</AppVersion></Properties>`;
 
   return {
     blob: createStoredZip([
@@ -1985,7 +2397,7 @@ function exportExcel() {
     const workbook = buildExpenseWorkbook(rows, query ? `${periodLabel} · filtro: ${query}` : periodLabel);
     const safePeriod = monthFilter === 'all' ? 'todos-los-meses' : monthFilter;
     downloadBlob(workbook.blob, workbook.blob.type, `control-presupuesto-${safePeriod}-${localDateKey()}.xlsx`);
-    showToast(`Excel verificado: ${workbook.count} gasto(s), total ${money(workbook.total)}.`);
+    showToast(`Excel verificado: ${workbook.count} movimiento(s), balance ${money(workbook.total)}.`);
   } catch (error) {
     console.error(error);
     showToast(error.message || 'No se pudo crear el archivo Excel.');
@@ -2004,8 +2416,10 @@ async function exportBackup() {
       origin: location.origin,
       counts: {
         activeExpenses: activeExpenses().length,
-        trash: trashedExpenses().length,
+        activeIncomes: activeIncomes().length,
+        trash: trashedExpenses().length + trashedIncomes().length,
         categories: state.categories.length,
+        incomeCategories: state.incomeCategories.length,
         favorites: state.favorites.length,
         projects: state.projects.length
       },
@@ -2049,8 +2463,10 @@ function showImportPreview(parsed) {
     ['Origen', parsed.source],
     ['Fecha de la copia', parsed.exportedAt ? formatDateTime(parsed.exportedAt) : 'No informada'],
     ['Gastos activos', String(activeExpenses(source).length)],
-    ['Papelera', String(trashedExpenses(source).length)],
-    ['Categorías', String(source.categories.length)],
+    ['Ingresos activos', String(activeIncomes(source).length)],
+    ['Papelera', String(trashedExpenses(source).length + trashedIncomes(source).length)],
+    ['Categorías de gasto', String(source.categories.length)],
+    ['Categorías de ingreso', String(source.incomeCategories.length)],
     ['Favoritos', String(source.favorites.length)],
     ['Proyectos', String(source.projects.length)]
   ].map(([label, value]) => `<div><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`).join('');
@@ -2086,11 +2502,14 @@ async function replaceWithPendingImport() {
   const result = await applyMutation('backup:replace', (draft) => {
     const copy = deepClone(imported);
     draft.expenses = copy.expenses;
+    draft.incomes = copy.incomes;
     draft.categories = copy.categories;
+    draft.incomeCategories = copy.incomeCategories;
     draft.favorites = copy.favorites;
     draft.projects = copy.projects;
     draft.monthSettings = copy.monthSettings;
     draft.recentCategories = copy.recentCategories;
+    draft.recentIncomeCategories = copy.recentIncomeCategories;
   }, { allowEmpty: true });
   if (result.ok) {
     pendingImport = null;
@@ -2118,6 +2537,14 @@ async function mergePendingImport() {
       }
     });
 
+    const incomeCategoryNamesSet = new Set(draft.incomeCategories.map((category) => category.name.toLowerCase()));
+    imported.incomeCategories.forEach((category) => {
+      if (!incomeCategoryNamesSet.has(category.name.toLowerCase())) {
+        draft.incomeCategories.push({ ...category, id: draft.incomeCategories.some((item) => item.id === category.id) ? uid() : category.id, order: draft.incomeCategories.length });
+        incomeCategoryNamesSet.add(category.name.toLowerCase());
+      }
+    });
+
     const projectIds = new Set(draft.projects.map((project) => project.id));
     const projectNames = new Set(draft.projects.map((project) => project.name.toLowerCase()));
     imported.projects.filter((project) => project.id !== 'general').forEach((project) => {
@@ -2136,6 +2563,14 @@ async function mergePendingImport() {
       }
     });
 
+    const incomeIds = new Set(draft.incomes.map((income) => income.id));
+    imported.incomes.forEach((income) => {
+      if (!incomeIds.has(income.id)) {
+        draft.incomes.push({ ...income, projectId: projectIds.has(income.projectId) ? income.projectId : 'general' });
+        incomeIds.add(income.id);
+      }
+    });
+
     const favoriteIds = new Set(draft.favorites.map((favorite) => favorite.id));
     const favoriteKeys = new Set(draft.favorites.map((favorite) => `${favorite.label.toLowerCase()}|${favorite.amount}|${favorite.category.toLowerCase()}`));
     imported.favorites.forEach((favorite) => {
@@ -2151,6 +2586,7 @@ async function mergePendingImport() {
       if (!draft.monthSettings[key]) draft.monthSettings[key] = { ...config };
     });
     draft.recentCategories = [...new Set([...draft.recentCategories, ...imported.recentCategories])].slice(0, 4);
+    draft.recentIncomeCategories = [...new Set([...draft.recentIncomeCategories, ...imported.recentIncomeCategories])].slice(0, 4);
   });
   if (result.ok) {
     pendingImport = null;
@@ -2164,6 +2600,7 @@ function updateAutoDatePreview() {
   if (manualDate) return;
   const now = new Date();
   $('autoDatePreview').textContent = `Automática: ${now.toLocaleDateString('es-BO')} · ${now.toLocaleTimeString('es-BO', { hour: '2-digit', minute: '2-digit' })}`;
+  if ($('autoIncomeDatePreview') && !manualIncomeDate) $('autoIncomeDatePreview').textContent = `Automática: ${now.toLocaleDateString('es-BO')} · ${now.toLocaleTimeString('es-BO', { hour: '2-digit', minute: '2-digit' })}`;
 }
 function resetDateMode() {
   manualDate = false;
@@ -2171,9 +2608,15 @@ function resetDateMode() {
   $('toggleDateBtn').textContent = 'Cambiar fecha';
   updateAutoDatePreview();
 }
+function resetIncomeDateMode() {
+  manualIncomeDate = false;
+  $('manualIncomeDateFields').hidden = true;
+  $('toggleIncomeDateBtn').textContent = 'Cambiar fecha';
+  updateAutoDatePreview();
+}
 
 function openResetConfirmation() {
-  $('resetWarningText').textContent = `Se reiniciarán ${activeExpenses().length} gastos activos, ${trashedExpenses().length} registros de papelera, presupuestos, categorías personalizadas, favoritos y proyectos. La activación del dispositivo se conservará.`;
+  $('resetWarningText').textContent = `Se reiniciarán ${activeExpenses().length} gastos activos, ${activeIncomes().length} ingresos activos, ${trashedExpenses().length + trashedIncomes().length} registros de papelera, presupuestos, categorías personalizadas, favoritos y proyectos. La activación del dispositivo se conservará.`;
   $('resetConfirmInput').value = '';
   openModal('resetModal');
 }
@@ -2192,11 +2635,14 @@ async function confirmReset() {
   const fresh = initialState();
   const result = await applyMutation('data:full-reset', (draft) => {
     draft.expenses = fresh.expenses;
+    draft.incomes = fresh.incomes;
     draft.categories = fresh.categories;
+    draft.incomeCategories = fresh.incomeCategories;
     draft.favorites = fresh.favorites;
     draft.projects = fresh.projects;
     draft.monthSettings = fresh.monthSettings;
     draft.recentCategories = fresh.recentCategories;
+    draft.recentIncomeCategories = fresh.recentIncomeCategories;
   }, { allowEmpty: true, skipSnapshot: true });
   if (result.ok) {
     closeModal('resetModal');
@@ -2402,6 +2848,32 @@ function bindEvents() {
     }
   };
 
+  $('incomeForm').onsubmit = async (event) => {
+    event.preventDefault();
+    const button = $('saveIncomeBtn');
+    button.disabled = true;
+    const ok = await addIncome(
+      $('incomeAmountInput').value,
+      $('incomeCategoryInput').value,
+      $('incomeDetailInput').value,
+      $('incomeProjectInput').value,
+      manualIncomeDate ? $('incomeDateInput').value : null,
+      manualIncomeDate ? $('incomeTimeInput').value : null
+    );
+    button.disabled = false;
+    if (ok) {
+      $('incomeAmountInput').value = '';
+      $('incomeDetailInput').value = '';
+      resetIncomeDateMode();
+      if (matchMedia('(max-width: 620px)').matches) {
+        document.activeElement?.blur?.();
+        syncVisualViewport();
+      } else {
+        $('incomeAmountInput').focus();
+      }
+    }
+  };
+
   $('toggleDateBtn').onclick = () => {
     manualDate = !manualDate;
     $('manualDateFields').hidden = !manualDate;
@@ -2413,10 +2885,22 @@ function bindEvents() {
     } else updateAutoDatePreview();
   };
 
+  $('toggleIncomeDateBtn').onclick = () => {
+    manualIncomeDate = !manualIncomeDate;
+    $('manualIncomeDateFields').hidden = !manualIncomeDate;
+    $('toggleIncomeDateBtn').textContent = manualIncomeDate ? 'Usar automática' : 'Cambiar fecha';
+    if (manualIncomeDate) {
+      $('incomeDateInput').value = localDateKey();
+      $('incomeTimeInput').value = localTimeKey();
+      $('autoIncomeDatePreview').textContent = 'Selecciona la fecha y hora del ingreso.';
+    } else updateAutoDatePreview();
+  };
+
   $('categoryPickerBtn').onclick = () => { renderCategoryPicker(); openModal('categoryPickerModal'); };
   $('periodFilter').onchange = renderSummary;
   $('searchInput').oninput = renderHistory;
   $('historyMonthFilter').onchange = renderHistory;
+  $('historyTypeFilter').onchange = renderHistory;
   $('exportBtn').onclick = exportExcel;
 
   document.querySelectorAll('.tab').forEach((tab) => {
@@ -2488,6 +2972,7 @@ function bindEvents() {
   };
 
   $('openCategoriesBtn').onclick = () => { closeModal('settingsModal'); openModal('categoriesModal'); };
+  $('openIncomeCategoriesBtn').onclick = () => { closeModal('settingsModal'); renderIncomeCategories(); openModal('incomeCategoriesModal'); };
   $('addCategoryBtn').onclick = async () => {
     const name = $('newCategoryInput').value.trim();
     if (!name) return;
@@ -2505,6 +2990,26 @@ function bindEvents() {
       if (added) openCategoryEditor(added.id);
     }
   };
+  $('addIncomeCategoryBtn').onclick = async () => {
+    const name = $('newIncomeCategoryInput').value.trim();
+    if (!name) return;
+    if (state.incomeCategories.some((category) => category.name.toLowerCase() === name.toLowerCase())) {
+      showToast('Esa categoría de ingreso ya existe.');
+      return;
+    }
+    const result = await applyMutation('income-category:add', (draft) => {
+      draft.incomeCategories.push(incomeCategoryObject(name, draft.incomeCategories.length));
+    });
+    if (result.ok) {
+      $('newIncomeCategoryInput').value = '';
+      const added = state.incomeCategories.find((category) => category.name === name);
+      showToast('Categoría de ingreso agregada. Puedes elegir color e ícono.');
+      if (added) openIncomeCategoryEditor(added.id);
+    }
+  };
+  $('editIncomeCategoryName').oninput = updateIncomeCategoryEditorPreview;
+  $('saveIncomeCategoryEditBtn').onclick = saveIncomeCategoryEditor;
+
   $('editCategoryName').oninput = updateCategoryEditorPreview;
   $('saveCategoryEditBtn').onclick = saveCategoryEditor;
 
@@ -2583,6 +3088,27 @@ function bindEvents() {
     if (result.ok) {
       closeModal('expenseEditorModal');
       showToast('Gasto actualizado y verificado.');
+    }
+  };
+
+  $('saveIncomeEditBtn').onclick = async () => {
+    const amount = parseAmount($('editIncomeAmount').value);
+    if (amount <= 0) { showToast('Monto inválido.'); return; }
+    const category = $('editIncomeCategory').value;
+    const result = await applyMutation('income:edit', (draft) => {
+      const income = draft.incomes.find((item) => item.id === editingIncomeId && !item.deletedAt);
+      if (!income) return false;
+      income.amount = amount;
+      income.category = category;
+      income.detail = $('editIncomeDetail').value.trim();
+      income.projectId = $('editIncomeProject').value;
+      income.date = $('editIncomeDate').value;
+      income.createdAt = localDateTime(income.date, $('editIncomeTime').value || '12:00');
+      registerRecentIncomeCategory(draft, category);
+    });
+    if (result.ok) {
+      closeModal('incomeEditorModal');
+      showToast('Ingreso actualizado y verificado.');
     }
   };
 

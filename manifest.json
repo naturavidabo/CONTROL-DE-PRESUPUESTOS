@@ -1,7 +1,7 @@
 {
   "name": "Control de Presupuesto",
   "short_name": "Presupuesto",
-  "description": "Control local de gastos con almacenamiento protegido, personalización visual y categorías por color.",
+  "description": "Control local de ingresos, gastos y balance con almacenamiento protegido y personalización visual.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",

@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#081f38" />
   <meta name="description" content="Control local de gastos, presupuestos y proyectos con respaldo reforzado." />
   <title>Control de Presupuesto</title>
-  <link rel="manifest" href="manifest.json?v=5.3" />
+  <link rel="manifest" href="manifest.json?v=6.0" />
   <link rel="icon" href="icon-v5.svg" type="image/svg+xml" />
   <script>
     (() => {
@@ -20,7 +20,7 @@
       } catch (_) { document.documentElement.dataset.theme = 'blue'; }
     })();
   </script>
-  <link rel="stylesheet" href="styles.css?v=5.3" />
+  <link rel="stylesheet" href="styles.css?v=6.0" />
 </head>
 <body>
   <div id="bootOverlay" class="system-overlay" aria-live="polite">
@@ -79,6 +79,17 @@
         <div class="daily-reference"><span>Referencia diaria</span><strong id="dailyAllowance">—</strong><small id="monthDaysInfo">Se calcula según los días restantes del mes.</small></div>
       </article>
 
+      <article class="balance-card">
+        <div class="panel-title inline-title"><div><h2>Balance del mes</h2><p id="incomeTodayInfo" class="section-help">Ingresos de hoy y semana.</p></div><span class="badge good">B6</span></div>
+        <div class="balance-grid">
+          <div><span>Ingresos</span><strong id="balanceIncome">Bs 0,00</strong></div>
+          <div><span>Gastos</span><strong id="balanceExpenses">Bs 0,00</strong></div>
+          <div><span>Balance</span><strong id="balanceNet">Bs 0,00</strong></div>
+          <div><span>Disponible real</span><strong id="balanceReal">Bs 0,00</strong></div>
+        </div>
+        <small id="balanceHint">Registra ingresos para calcular el balance automáticamente.</small>
+      </article>
+
       <article id="activeProjectCard" class="project-highlight" hidden>
         <div class="project-highlight-head"><div><span>Proyecto activo</span><strong id="activeProjectName">—</strong></div><button id="finishProjectBtn" class="small-light-btn" type="button">Finalizar</button></div>
         <div class="project-numbers"><div><span>Presupuesto</span><strong id="activeProjectBudget">Bs 0,00</strong></div><div><span>Gastado</span><strong id="activeProjectSpent">Bs 0,00</strong></div><div><span>Disponible</span><strong id="activeProjectAvailable">Bs 0,00</strong></div></div>
@@ -91,6 +102,7 @@
       <article><span>Hoy</span><strong id="todayTotal">Bs 0,00</strong></article>
       <article><span>Semana</span><strong id="weekTotal">Bs 0,00</strong></article>
       <article><span>Mes</span><strong id="monthTotal">Bs 0,00</strong></article>
+      <article><span>Ingresos mes</span><strong id="monthIncomeTotalMini">Bs 0,00</strong></article>
     </section>
 
     <section id="recentSection" class="panel" hidden>
@@ -115,20 +127,34 @@
       </form>
     </section>
 
+    <section class="panel income-panel">
+      <h2>Nuevo ingreso</h2>
+      <p class="section-help">Registra sueldo, bono, trabajo extra, venta, devolución u otro dinero recibido.</p>
+      <form id="incomeForm" class="form">
+        <div class="field"><label for="incomeAmountInput">Monto recibido</label><input id="incomeAmountInput" type="text" inputmode="decimal" pattern="[0-9.,]*" autocomplete="off" placeholder="Ej. 2800 o 350,50" required /></div>
+        <div class="field"><label for="incomeCategoryInput">Tipo de ingreso</label><select id="incomeCategoryInput"></select><small>Las categorías de ingresos también se pueden personalizar.</small></div>
+        <div class="field"><label for="incomeDetailInput">Detalle <span class="optional">(opcional)</span></label><input id="incomeDetailInput" type="text" autocomplete="off" placeholder="Ej. sueldo, bono, devolución" /></div>
+        <div class="field"><label for="incomeProjectInput">Asignar a</label><select id="incomeProjectInput"></select><small>Útil si un proyecto o viaje también tiene ingresos propios.</small></div>
+        <div class="field date-field"><div class="date-row"><div><label>Fecha y hora</label><small id="autoIncomeDatePreview">Se registrará automáticamente.</small></div><button id="toggleIncomeDateBtn" class="link-btn" type="button">Cambiar fecha</button></div><div id="manualIncomeDateFields" class="manual-date" hidden><input id="incomeDateInput" type="date" /><input id="incomeTimeInput" type="time" /></div></div>
+        <button id="saveIncomeBtn" type="submit" class="main-btn full income-btn">Guardar ingreso</button>
+      </form>
+    </section>
+
     <nav class="tabs" aria-label="Secciones"><button class="tab active" data-tab="summary" type="button">Resumen</button><button class="tab" data-tab="history" type="button">Historial</button><button class="tab" data-tab="projects" type="button">Proyectos</button></nav>
 
     <main>
       <section id="summaryTab" class="tab-content active">
         <div class="panel"><div class="panel-title inline-title"><div><h2>Gastos por categoría</h2><p id="categoryPeriodTotal" class="section-help">Total del mes: Bs 0,00</p></div><select id="periodFilter" class="compact-select"><option value="day">Hoy</option><option value="week">Semana</option><option value="month" selected>Mes</option></select></div><div id="categorySummary" class="bars"></div></div>
-        <div class="panel"><h2>Ritmo de gasto</h2><p id="paceMessage" class="pace">Configura tu presupuesto para ver el ritmo de gasto.</p></div>
+        <div class="panel"><div class="panel-title inline-title"><div><h2>Ingresos por categoría</h2><p id="incomeSummaryTotal" class="section-help">Total ingresos: Bs 0,00</p></div></div><div id="incomeSummary" class="bars"></div></div>
+        <div class="panel"><h2>Ritmo financiero</h2><p id="paceMessage" class="pace">Configura tu presupuesto o registra ingresos para ver el ritmo financiero.</p></div>
       </section>
 
-      <section id="historyTab" class="tab-content"><div class="panel"><div class="history-tools"><div><h2>Historial</h2><p class="section-help">Consulta, edita y exporta tus gastos.</p></div><button id="exportBtn" class="text-btn compact-btn" type="button">Exportar Excel (.xlsx)</button></div><div class="history-filters"><input id="searchInput" class="search" placeholder="Buscar gasto" /><select id="historyMonthFilter"></select></div><div id="historyList" class="history"></div></div></section>
+      <section id="historyTab" class="tab-content"><div class="panel"><div class="history-tools"><div><h2>Historial</h2><p class="section-help">Consulta, edita y exporta tus ingresos y gastos.</p></div><button id="exportBtn" class="text-btn compact-btn" type="button">Exportar Excel (.xlsx)</button></div><div class="history-filters"><input id="searchInput" class="search" placeholder="Buscar movimiento" /><select id="historyMonthFilter"></select><select id="historyTypeFilter"><option value="all">Todos</option><option value="expenses">Solo gastos</option><option value="incomes">Solo ingresos</option></select></div><div id="historyList" class="history"></div></div></section>
 
       <section id="projectsTab" class="tab-content"><div class="panel"><h2>Proyecto o viaje</h2><p class="section-help project-help">Separa gastos de viajes, cursos, comisiones u otras actividades sin perder el total general.</p><form id="projectForm" class="form compact-form"><div class="field"><label for="projectNameInput">Nombre</label><input id="projectNameInput" type="text" placeholder="Ej. Viaje a Cochabamba" required /></div><div class="field"><label for="projectBudgetInput">Presupuesto <span class="optional">(opcional)</span></label><input id="projectBudgetInput" type="text" inputmode="decimal" pattern="[0-9.,]*" placeholder="Ej. 1200" /></div><button class="main-btn full" type="submit">Crear y activar proyecto</button></form><div id="projectList" class="project-list"></div></div></section>
     </main>
 
-    <footer class="app-footer"><span>Control de Presupuesto B5.3 · estabilización y personalización</span><button id="checkUpdateBtn" class="link-btn" type="button">Buscar actualización</button></footer>
+    <footer class="app-footer"><span>Control de Presupuesto B6 · ingresos, gastos y balance</span><button id="checkUpdateBtn" class="link-btn" type="button">Buscar actualización</button></footer>
   </div>
 
   <div id="toast" class="toast" hidden></div>
@@ -152,13 +178,18 @@
       <label class="switch-row"><span><strong>Reducir animaciones</strong><small>Útil si prefieres transiciones más discretas.</small></span><input id="reduceMotionInput" type="checkbox" /></label>
       <label class="switch-row"><span><strong>Colores en categorías</strong><small>Muestra color e ícono para reconocerlas rápidamente.</small></span><input id="categoryColorsInput" type="checkbox" checked /></label>
       <button id="saveAppearanceBtn" class="main-btn full" type="button">Guardar apariencia</button>
-      <button id="openCategoriesBtn" class="secondary-btn" type="button">Administrar categorías, colores e íconos</button>
+      <button id="openCategoriesBtn" class="secondary-btn" type="button">Administrar categorías de gastos</button>
+      <button id="openIncomeCategoriesBtn" class="secondary-btn" type="button">Administrar categorías de ingresos</button>
     </section>
     <section class="settings-section"><h3>Activación</h3><p id="activationStatusText" class="calculation-note">Aplicación activada en este dispositivo.</p><button id="deactivateBtn" class="secondary-btn" type="button">Desactivar aplicación</button></section>
     <button id="resetBtn" class="danger-btn" type="button">Borrar todos los datos financieros</button>
   </div></div>
 
   <div id="categoriesModal" class="modal" hidden><div class="modal-card"><button class="close" data-close="categoriesModal" type="button">×</button><h2>Administrar categorías</h2><p class="modal-help">Personaliza nombre, color, ícono, orden y visibilidad. “Otros” permanece como respaldo.</p><div class="inline-form"><input id="newCategoryInput" type="text" placeholder="Ej. Mascotas" /><button id="addCategoryBtn" class="text-btn" type="button">Agregar</button></div><div id="categoriesList" class="category-list"></div></div></div>
+
+  <div id="incomeCategoriesModal" class="modal" hidden><div class="modal-card"><button class="close" data-close="incomeCategoriesModal" type="button">×</button><h2>Administrar categorías de ingresos</h2><p class="modal-help">Personaliza sueldo, bono, trabajo extra, devolución u otros ingresos según tu necesidad. “Otros ingresos” permanece como respaldo.</p><div class="inline-form"><input id="newIncomeCategoryInput" type="text" placeholder="Ej. Alquiler recibido" /><button id="addIncomeCategoryBtn" class="text-btn" type="button">Agregar</button></div><div id="incomeCategoriesList" class="category-list"></div></div></div>
+
+  <div id="incomeCategoryEditorModal" class="modal bottom-modal" hidden><div class="modal-card compact-modal"><button class="close" data-close="incomeCategoryEditorModal" type="button">×</button><h2>Personalizar ingreso</h2><div id="incomeCategoryEditorPreview" class="category-editor-preview"></div><label for="editIncomeCategoryName">Nombre</label><input id="editIncomeCategoryName" type="text" maxlength="40" /><label>Ícono</label><div id="incomeCategoryIconOptions" class="icon-picker" role="radiogroup" aria-label="Ícono de ingreso"></div><label>Color</label><div id="incomeCategoryColorOptions" class="color-picker" role="radiogroup" aria-label="Color de ingreso"></div><button id="saveIncomeCategoryEditBtn" class="main-btn full" type="button">Guardar categoría de ingreso</button></div></div>
 
   <div id="categoryEditorModal" class="modal bottom-modal" hidden><div class="modal-card compact-modal"><button class="close" data-close="categoryEditorModal" type="button">×</button><h2>Personalizar categoría</h2><div id="categoryEditorPreview" class="category-editor-preview"></div><label for="editCategoryName">Nombre</label><input id="editCategoryName" type="text" maxlength="40" /><label>Ícono</label><div id="categoryIconOptions" class="icon-picker" role="radiogroup" aria-label="Ícono de categoría"></div><label>Color</label><div id="categoryColorOptions" class="color-picker" role="radiogroup" aria-label="Color de categoría"></div><button id="saveCategoryEditBtn" class="main-btn full" type="button">Guardar categoría</button></div></div>
 
@@ -170,6 +201,8 @@
 
   <div id="expenseEditorModal" class="modal" hidden><div class="modal-card compact-modal"><button class="close" data-close="expenseEditorModal" type="button">×</button><h2>Editar gasto</h2><label for="editExpenseAmount">Monto</label><input id="editExpenseAmount" type="text" inputmode="decimal" pattern="[0-9.,]*" /><label for="editExpenseCategory">Categoría</label><select id="editExpenseCategory"></select><label for="editExpenseDetail">Detalle</label><input id="editExpenseDetail" type="text" /><label for="editExpenseProject">Asignar a</label><select id="editExpenseProject"></select><label for="editExpenseDate">Fecha</label><input id="editExpenseDate" type="date" /><label for="editExpenseTime">Hora</label><input id="editExpenseTime" type="time" /><button id="saveExpenseEditBtn" class="main-btn full" type="button">Guardar cambios</button></div></div>
 
+  <div id="incomeEditorModal" class="modal" hidden><div class="modal-card compact-modal"><button class="close" data-close="incomeEditorModal" type="button">×</button><h2>Editar ingreso</h2><label for="editIncomeAmount">Monto</label><input id="editIncomeAmount" type="text" inputmode="decimal" pattern="[0-9.,]*" /><label for="editIncomeCategory">Tipo de ingreso</label><select id="editIncomeCategory"></select><label for="editIncomeDetail">Detalle</label><input id="editIncomeDetail" type="text" /><label for="editIncomeProject">Asignar a</label><select id="editIncomeProject"></select><label for="editIncomeDate">Fecha</label><input id="editIncomeDate" type="date" /><label for="editIncomeTime">Hora</label><input id="editIncomeTime" type="time" /><button id="saveIncomeEditBtn" class="main-btn full income-btn" type="button">Guardar cambios</button></div></div>
+
   <div id="projectEditorModal" class="modal" hidden><div class="modal-card compact-modal"><button class="close" data-close="projectEditorModal" type="button">×</button><h2>Editar proyecto</h2><label for="editProjectName">Nombre</label><input id="editProjectName" type="text" /><label for="editProjectBudget">Presupuesto</label><input id="editProjectBudget" type="text" inputmode="decimal" pattern="[0-9.,]*" /><button id="saveProjectEditBtn" class="main-btn full" type="button">Guardar cambios</button></div></div>
 
   <div id="trashModal" class="modal" hidden><div class="modal-card"><button class="close" data-close="trashModal" type="button">×</button><h2>Papelera</h2><p class="modal-help">Los gastos eliminados pueden restaurarse. No se borran de inmediato.</p><div id="trashList" class="history"></div></div></div>
@@ -178,6 +211,6 @@
 
   <div id="resetModal" class="modal" hidden><div class="modal-card compact-modal"><button class="close" data-close="resetModal" type="button">×</button><h2>Borrar datos financieros</h2><p id="resetWarningText" class="danger-note"></p><p class="modal-help">Se creará una copia interna antes del borrado. Escribe <strong>BORRAR</strong> para confirmar.</p><input id="resetConfirmInput" type="text" autocomplete="off" placeholder="BORRAR" /><button id="confirmResetBtn" class="danger-btn" type="button">Confirmar borrado</button></div></div>
 
-  <script src="app.js?v=5.3"></script>
+  <script src="app.js?v=6.0"></script>
 </body>
 </html>
