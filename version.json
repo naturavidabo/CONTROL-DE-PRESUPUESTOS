@@ -1,6 +1,6 @@
 {
-  "release": "6.0",
-  "name": "Control de Presupuesto B6",
-  "published": "2026-07-11",
-  "focus": "Ingresos, gastos, balance y pulido visual"
+  "release": "6.1",
+  "name": "Control de Presupuesto B6.1",
+  "published": "2026-07-17",
+  "notes": "Gastos primero, balance separado y proyectos fuera del registro diario."
 }

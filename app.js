@@ -1,7 +1,7 @@
 'use strict';
 
 const APP_VERSION = 6;
-const APP_RELEASE = '6.0';
+const APP_RELEASE = '6.1';
 const UI_PREFS_KEY = 'control_presupuesto_ui_prefs_v1';
 const DB_NAME = 'control_presupuesto_b5';
 const DB_VERSION = 6;
@@ -9,7 +9,7 @@ const LEGACY_STORAGE_KEY = 'control_presupuesto_v1';
 const MIRROR_CURRENT_KEY = 'control_presupuesto_b5_mirror_current';
 const MIRROR_PREVIOUS_KEY = 'control_presupuesto_b5_mirror_previous';
 const ACTIVATION_HASH = '77fdb82a65f1267b496683a0f44ffde77144060f1dac8989f3b687fde132fe4a';
-const CHANNEL_NAME = 'control-presupuesto-b6';
+const CHANNEL_NAME = 'control-presupuesto-b6-1';
 const MAX_SNAPSHOTS = 20;
 const MAX_AUDIT_ROWS = 500;
 
@@ -994,7 +994,7 @@ async function initializeDataLayer() {
   }
 
   if (verification.status === 'visual-migration') {
-    $('bootMessage').textContent = 'Aplicando balance de ingresos y personalización segura…';
+    $('bootMessage').textContent = 'Aplicando organización B6.1 con gastos primero…';
     await forceWriteState(verification.data, 'initialize:migrate-b5-3-visuals', {
       visualMigrationAt: new Date().toISOString(),
       release: APP_RELEASE
@@ -1043,9 +1043,9 @@ async function reloadFromDatabase({ notify = false } = {}) {
   const bundle = await readDatabaseBundle();
   const verification = await verifyLoadedBundle(bundle);
   if (verification.status === 'visual-migration') {
-    await forceWriteState(verification.data, 'reload:migrate-b6-balance', { visualMigrationAt: new Date().toISOString(), release: APP_RELEASE });
+    await forceWriteState(verification.data, 'reload:migrate-b6-1-layout', { visualMigrationAt: new Date().toISOString(), release: APP_RELEASE });
     renderAll();
-    if (notify) showToast('Datos actualizados a B6 sin modificar tus gastos.');
+    if (notify) showToast('Datos actualizados a B6.1 sin modificar tus registros.');
     return;
   }
   if (verification.status !== 'valid') {
@@ -1420,14 +1420,14 @@ function renderSelectors() {
     $('categoryInput').value = categories[0] || 'Otros';
   }
   updateCategoryPickerDisplay($('categoryInput').value || categories[0] || 'Otros');
-  setSelectOptions($('projectInput'), projects, activeProject().id);
-  setSelectOptions($('favoriteConfirmProject'), projects, activeProject().id);
+  setSelectOptions($('projectInput'), projects, 'general');
+  setSelectOptions($('favoriteConfirmProject'), projects, 'general');
   setSelectOptions($('favoriteCategoryInput'), categories.map((name) => ({ value: name, label: name })), $('favoriteCategoryInput').value);
   setSelectOptions($('editExpenseCategory'), categories.map((name) => ({ value: name, label: name })), $('editExpenseCategory').value);
   setSelectOptions($('editExpenseProject'), projects, $('editExpenseProject').value);
   const incomeCategories = incomeCategoryNames();
   setSelectOptions($('incomeCategoryInput'), incomeCategories.map((name) => ({ value: name, label: name })), $('incomeCategoryInput').value || incomeCategories[0] || 'Otros ingresos');
-  setSelectOptions($('incomeProjectInput'), projects, activeProject().id);
+  setSelectOptions($('incomeProjectInput'), projects, 'general');
   setSelectOptions($('editIncomeCategory'), incomeCategories.map((name) => ({ value: name, label: name })), $('editIncomeCategory').value || incomeCategories[0] || 'Otros ingresos');
   setSelectOptions($('editIncomeProject'), projects, $('editIncomeProject').value);
 }
@@ -1456,7 +1456,7 @@ function renderTotals() {
   $('todayTotal').textContent = money(today);
   $('weekTotal').textContent = money(week);
   $('monthTotal').textContent = money(monthSpent);
-  $('monthIncomeTotalMini').textContent = money(monthIncome);
+  if ($('monthIncomeTotalMini')) $('monthIncomeTotalMini').textContent = money(monthIncome);
   $('currentMonthName').textContent = monthLabel(monthKey());
   $('availableMonth').textContent = money(config.budget > 0 ? available : realAvailable);
   $('monthProgressBar').style.width = `${percent}%`;
@@ -1494,10 +1494,9 @@ function renderTotals() {
 function renderActiveProject() {
   const project = activeProject();
   const card = $('activeProjectCard');
-  $('activeProjectLabel').textContent = project.name;
-  $('projectHint').textContent = project.id === 'general'
-    ? 'El gasto se registrará dentro de tus gastos generales.'
-    : `El gasto se asignará a “${project.name}” y también contará en el total mensual.`;
+  if ($('activeProjectLabel')) $('activeProjectLabel').textContent = 'Registro diario de gastos';
+  if ($('projectHint')) $('projectHint').textContent = 'Los gastos rápidos se registran como gastos generales.';
+  if (!card) return;
   if (project.id === 'general') {
     card.hidden = true;
     return;
@@ -1561,7 +1560,7 @@ function openFavoriteConfirmation(id) {
   $('favoriteConfirmInfo').textContent = `Categoría: ${favorite.category}. Revisa el monto antes de registrar.`;
   $('favoriteConfirmAmount').value = inputAmount(favorite.amount);
   renderSelectors();
-  $('favoriteConfirmProject').value = activeProject().id;
+  $('favoriteConfirmProject').value = 'general';
   openModal('favoriteConfirmModal');
   setTimeout(() => $('favoriteConfirmAmount').focus(), 80);
 }
@@ -2370,8 +2369,8 @@ function buildExpenseWorkbook(rows, periodLabel) {
   const rootRels = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="docProps/core.xml"/><Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties" Target="docProps/app.xml"/></Relationships>`;
   const contentTypes = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/><Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/><Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/></Types>`;
   const nowIso = exportedAt.toISOString();
-  const coreXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"><dc:title>Control de Presupuesto</dc:title><dc:creator>Control de Presupuesto B6</dc:creator><cp:lastModifiedBy>Control de Presupuesto B6</cp:lastModifiedBy><dcterms:created xsi:type="dcterms:W3CDTF">${nowIso}</dcterms:created><dcterms:modified xsi:type="dcterms:W3CDTF">${nowIso}</dcterms:modified></cp:coreProperties>`;
-  const appXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties" xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes"><Application>Control de Presupuesto B6</Application><DocSecurity>0</DocSecurity><AppVersion>6.0</AppVersion></Properties>`;
+  const coreXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"><dc:title>Control de Presupuesto</dc:title><dc:creator>Control de Presupuesto B6.1</dc:creator><cp:lastModifiedBy>Control de Presupuesto B6.1</cp:lastModifiedBy><dcterms:created xsi:type="dcterms:W3CDTF">${nowIso}</dcterms:created><dcterms:modified xsi:type="dcterms:W3CDTF">${nowIso}</dcterms:modified></cp:coreProperties>`;
+  const appXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties" xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes"><Application>Control de Presupuesto B6.1</Application><DocSecurity>0</DocSecurity><AppVersion>6.1</AppVersion></Properties>`;
 
   return {
     blob: createStoredZip([
@@ -3030,7 +3029,7 @@ function bindEvents() {
   $('addFavoriteBtn').onclick = () => openFavoriteEditor();
   $('confirmFavoriteBtn').onclick = async () => {
     const favorite = state.favorites.find((item) => item.id === selectedFavoriteId);
-    if (favorite && await addExpense($('favoriteConfirmAmount').value, favorite.category, favorite.label, $('favoriteConfirmProject').value)) {
+    if (favorite && await addExpense($('favoriteConfirmAmount').value, favorite.category, favorite.label, 'general')) {
       closeModal('favoriteConfirmModal');
     }
   };
